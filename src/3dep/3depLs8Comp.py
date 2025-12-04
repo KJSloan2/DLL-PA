@@ -13,7 +13,7 @@ import numpy as np
 from geopy.distance import geodesic
 from shapely.geometry import Point, Polygon
 from scipy.spatial import cKDTree
-
+import csv
 from datetime import datetime
 ######################################################################################
 import sys
@@ -274,21 +274,19 @@ cursor.execute("DELETE FROM terrainComposite")
 conn.commit()
 
 # cursor = conn.cursor()
-query = "SELECT * FROM highway_srf"
-cursor.execute(query)
 
-osmHighwayPoints = []
-osmHighwayRows = []
-for row in cursor.fetchall():
-    # row structure: geoid, lat, lon, surface
-    geoid, lat, lon, surface = row[0], row[1], row[2], row[3]
-    osmHighwayPoints.append((lon, lat))
-    osmHighwayRows.append(row)
+'''for osmFturCategory in ["highway", "building", "construction"]:
+	osmFturPts = []
+	osmFturRows = []
+	for row in cursor.fetchall():
+		# row structure: geoid, lat, lon, surface
+		geoid, lat, lon, surface = row[0], row[1], row[2], row[3]
+		osmFturPts.append((lon, lat))
+		osmFturRows.append(row)
 
-osmHighwayCKDTree = cKDTree(osmHighwayPoints)
+	osmFturCKDTree = cKDTree(osmFturPts)'''
 ######################################################################################
 #write to csv
-import csv
 with open(os.path.join(r"output\3dep\test.csv"), mode='w', newline='', encoding='utf-8') as file:
 	writer = csv.writer(file)
 	
@@ -300,35 +298,80 @@ with open(os.path.join(r"output\3dep\test.csv"), mode='w', newline='', encoding=
 		"mdrdasp", "mdrdconc", "mdrdgrv", "mdrdunp", "mdconst", "mdbldg"
 		])
 	
+	distance_by_srf = {
+		"asphalt":{"dist": [], "mean_dist": None},
+		"concrete":{"dist": [], "mean_dist": None},
+		"gravel":{"dist": [], "mean_dist": None},
+		"unpaved":{"dist": [], "mean_dist": None},
+		"building":{"dist": [], "mean_dist": None},
+		"construction":{"dist": [], "mean_dist": None},
+	}
+
+	# Build CKDTrees for all OSM feature categories first
+	osmFeatureTrees = {}
+	for osmFturCategory in ["highway", "building", "construction"]:
+		query = f"SELECT * FROM {osmFturCategory}_srf"
+		cursor.execute(query)
+		
+		osmFturPts = []
+		osmFturRows = []
+		for row in cursor.fetchall():
+			# row structure: geoid, lat, lon, surface
+			geoid, lat, lon, srf = row[0], row[1], row[2], row[3]
+			osmFturPts.append((lon, lat))
+			osmFturRows.append(row)
+		
+		if osmFturPts:
+			osmFeatureTrees[osmFturCategory] = {
+				'tree': cKDTree(osmFturPts),
+				'points': osmFturPts,
+				'rows': osmFturRows
+			}
+
+	# Now process each terrain point once
 	for idx, dfRow in df.iterrows():
 		terrainPt = np.array([dfRow['lon'], dfRow['lat']])
-		indices = osmHighwayCKDTree.query_ball_point(terrainPt, r=0.005)
-		distance_by_srf = {
-			"asphalt":{"dist": [], "mean_dist": None},
-			"concrete":{"dist": [], "mean_dist": None},
-			"gravel":{"dist": [], "mean_dist": None},
-			"unpaved":{"dist": [], "mean_dist": None},
-		}
-		for index in indices:
-			highway_row = osmHighwayRows[index]
-			geoid, lat, lon, srf = highway_row
-
-			distance = np.linalg.norm(terrainPt - np.array(osmHighwayPoints[index]))
-
-			if distance < 0.005:  # Approx ~10 meters
-				distanceFt = (distance*100000)/3.28 # Convert to feet
-				distance_by_srf[srf]["dist"].append(distanceFt)
-				pass
 		
+		# Reset distances for this terrain point
+		for srfKey in distance_by_srf.keys():
+			distance_by_srf[srfKey]["dist"] = []
+			distance_by_srf[srfKey]["mean_dist"] = None
+		
+		# Query all OSM feature categories for this terrain point
+		for osmFturCategory, treeData in osmFeatureTrees.items():
+			osmFturCKDTree = treeData['tree']
+			osmFturPts = treeData['points']
+			osmFturRows = treeData['rows']
+			
+			indices = osmFturCKDTree.query_ball_point(terrainPt, r=0.005)
+			
+			for index in indices:
+				osmFtur_row = osmFturRows[index]
+				geoid, lat, lon, srf = osmFtur_row
+				
+				distance = np.linalg.norm(terrainPt - np.array(osmFturPts[index]))
+				
+				if distance < 0.005:  # Approx ~500 meters
+					distanceFt = (distance * 100000) / 3.28  # Convert to feet
+					
+					# Map surface types to distance_by_srf keys
+					if srf in distance_by_srf:
+						distance_by_srf[srf]["dist"].append(distanceFt)
+					elif osmFturCategory == "building":
+						distance_by_srf["building"]["dist"].append(distanceFt)
+					elif osmFturCategory == "construction":
+						distance_by_srf["construction"]["dist"].append(distanceFt)
+		
+		# Calculate mean distances for this terrain point
 		for srfKey, obj in distance_by_srf.items():
 			if obj["dist"]:
 				avg_distance = sum(obj["dist"]) / len(obj["dist"])
 				distance_by_srf[srfKey]["mean_dist"] = avg_distance
-			#else:
-			#	distance_by_srf[srfKey+"_mean_dist"] = None
+		
+		# Insert into database once per terrain point
 		try:
 			cursor.execute(
-				f'''INSERT INTO {'terrainComposite'} (
+				'''INSERT INTO terrainComposite (
 				geoid, lat, lon, lstf, lstf_serc, lstf_arc,
 				lstf_flag, ndvi, ndvi_serc, ndvi_arc, ndvi_flag,
 				ndmi, ndmi_serc, ndmi_arc, ndmi_flag,
@@ -342,21 +385,26 @@ with open(os.path.join(r"output\3dep\test.csv"), mode='w', newline='', encoding=
 				dfRow['elv_rel'], dfRow['elv_real'], dfRow['idx_row'],
 				dfRow['idx_col'], distance_by_srf["asphalt"]["mean_dist"],
 				distance_by_srf["concrete"]["mean_dist"], distance_by_srf["gravel"]["mean_dist"],
-				distance_by_srf["unpaved"]["mean_dist"], 0, 0)
+				distance_by_srf["unpaved"]["mean_dist"], distance_by_srf["construction"]["mean_dist"], 
+				distance_by_srf["building"]["mean_dist"])
 			)
-		except:
-			pass
-
+		except Exception as e:
+			print(f"Error inserting row {idx}: {e}")
+		
+		# Write to CSV once per terrain point
 		writer.writerow([
 			idx, dfRow['lat'], dfRow['lon'],
-			dfRow['lstf'], dfRow['lstf_serc'], dfRow['lstf_arc'],
-			dfRow['lstf_flag'], dfRow['ndvi'], dfRow['ndvi_serc'],
-			dfRow['ndvi_arc'], dfRow['ndvi_flag'], dfRow['ndmi'],
-			dfRow['ndmi_serc'], dfRow['ndmi_arc'], dfRow['ndmi_flag'],
-			dfRow['elv_rel'], dfRow['elv_real'], dfRow['idx_row'],
-			dfRow['idx_col'], distance_by_srf["asphalt"]["mean_dist"],
-			distance_by_srf["concrete"]["mean_dist"], distance_by_srf["gravel"]["mean_dist"],
-			distance_by_srf["unpaved"]["mean_dist"], 0, 0
+			dfRow['lstf'], dfRow['lstf_serc'], dfRow['lstf_arc'], dfRow['lstf_flag'], 
+			dfRow['ndvi'], dfRow['ndvi_serc'], dfRow['ndvi_arc'], dfRow['ndvi_flag'], 
+			dfRow['ndmi'], dfRow['ndmi_serc'], dfRow['ndmi_arc'], dfRow['ndmi_flag'],
+			dfRow['elv_rel'], dfRow['elv_real'], 
+			dfRow['idx_row'], dfRow['idx_col'], 
+			distance_by_srf["asphalt"]["mean_dist"],
+			distance_by_srf["concrete"]["mean_dist"], 
+			distance_by_srf["gravel"]["mean_dist"],
+			distance_by_srf["unpaved"]["mean_dist"], 
+			distance_by_srf["construction"]["mean_dist"],
+			distance_by_srf["building"]["mean_dist"]
 		])
 
 conn.commit()
