@@ -68,71 +68,56 @@ def interpolate_points(p1: Point, p2: Point, n_points: int) -> List[Point]:
 ######################################################################################
 conn = sqlite3.connect('tempGeo.db')
 cursor = conn.cursor()
-osmCategory = "highway"
-
-cursor.execute("DELETE FROM highway_srf")
-conn.commit()
 ######################################################################################
 dist_thresh = 10
 output_pts = {"lon": [], "lat": [], "srf": []}
 
-data_fName = f"{locationKey}_highway.geojson"
-data_path = os.path.join(parent_dir, "data", "osm", "highway", data_fName)
+for osmCategory in ["highway", "building", "construction"]:
 
-with open(data_path, "r", encoding="utf-8") as f:
-    data_json = json.load(f)
+    data_fName = f"{locationKey}_{osmCategory}.geojson"
+    data_path = os.path.join(parent_dir, "data", "osm", osmCategory, data_fName)
 
-for feature in data_json["features"]:
-    geometry = feature["geometry"]
-    geometry_type = geometry["type"]
+    cursor.execute(f"DELETE FROM {osmCategory}_srf")
+    conn.commit()
 
-    properties = feature["properties"]
-    if "surface" in properties:
-        surface_value = properties["surface"]
-    else:
-        surface_value = "unpaved"
+    with open(data_path, "r", encoding="utf-8") as f:
+        data_json = json.load(f)
 
-    if geometry_type == "LineString":
-        coordinates = geometry["coordinates"]
+    for feature in data_json["features"]:
+        geometry = feature["geometry"]
+        geometry_type = geometry["type"]
 
-        for i in range(len(coordinates) - 1):
-            pt1 = coordinates[i]
-            pt2 = coordinates[i + 1]
-            lon1, lat1 = pt1[0], pt1[1]
-            lon2, lat2 = pt2[0], pt2[1]
+        properties = feature["properties"]
+        if "surface" in properties:
+            surface_value = properties["surface"]
+        else:
+            surface_value = "unknown"
 
-            dist_mtr = haversine([lon1, lat1], [lon2, lat2])["m"]
+        if geometry_type == "LineString":
+            coordinates = geometry["coordinates"]
 
-            if dist_mtr > dist_thresh:
-                n_points = int(dist_mtr / dist_thresh)
-                new_pts = interpolate_points(pt1, pt2, n_points)
+            for i in range(len(coordinates) - 1):
+                pt1 = coordinates[i]
+                pt2 = coordinates[i + 1]
+                lon1, lat1 = pt1[0], pt1[1]
+                lon2, lat2 = pt2[0], pt2[1]
 
-                for pt in new_pts:
-                    cursor.execute(
-                        f'''INSERT INTO {osmCategory+"_srf"} (lon, lat, surface) VALUES (?, ?, ?)''',
-                        (pt[0], pt[1], surface_value)
+                dist_mtr = haversine([lon1, lat1], [lon2, lat2])["m"]
+
+                if dist_mtr > dist_thresh:
+                    n_points = int(dist_mtr / dist_thresh)
+                    new_pts = interpolate_points(pt1, pt2, n_points)
+
+                    for pt in new_pts:
+                        cursor.execute(
+                            f'''INSERT INTO {osmCategory+"_srf"} (lon, lat, srf) VALUES (?, ?, ?)''',
+                            (pt[0], pt[1], surface_value)
+                        )
+                cursor.execute(
+                    f'''INSERT INTO {osmCategory+"_srf"} (lon, lat, srf) VALUES (?, ?, ?)''',
+                    (pt1[0], pt1[1], surface_value)
                     )
-            cursor.execute(
-                f'''INSERT INTO {osmCategory+"_srf"} (lon, lat, surface) VALUES (?, ?, ?)''',
-                (pt1[0], pt1[1], surface_value)
-                )
                 
 conn.commit()
 conn.close()
-######################################################################################
-# kdtree_l8 = cKDTree(l8_points)
-# cp_idx_l8 = kdtree_l8.query(query_point, k=4)
-
-# write to csv
-'''output_fName = f"{locationKey}_highway_interp.csv"
-output_csv_path = os.path.join(parent_dir, "data", "osm", "highway", output_fName)
-
-with open(output_csv_path, "w", encoding="utf-8") as csvfile:
-    csvfile.write("lon,lat,srf\n")
-    for lon, lat, srf in zip(
-        output_pts["lon"],
-        output_pts["lat"],
-        output_pts["srf"],
-    ):
-        csvfile.write(f"{lon},{lat},{srf}\n")'''
 ######################################################################################
