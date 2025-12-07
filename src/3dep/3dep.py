@@ -11,10 +11,11 @@ import numpy as np
 import csv
 import rasterio as rio
 from rasterio.plot import show
+import sqlite3
 ######################################################################################
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from utils import  json_serialize
+from utils import  json_serialize, to_py_type
 ######################################################################################
 #resampling_size: The size of the pooling window to avergae and smooth the data
 resampling_size = 1
@@ -237,7 +238,7 @@ for i in range(1,src_height-(resampling_size+1),resampling_size):
 			elv_rel = elv-b1Elevation_min
 			elv_scaled = compress_and_scale(elv, b1Elevation_min, b1Elevation_max, target_min=0, target_max=len(palette))
 			
-			output.append({"lon":coord_x, "lat":coord_y, "elv_rel":elv_rel, "elv_real": elv, "idx_row": j, "idx_col": i})
+			output.append({"lon":coord_x, "lat":coord_y, "elv_rel":elv_rel, "elv": elv, "idx_row": j, "idx_col": i})
 			pool_coords[0].append(coord_y)
 			pool_coords[1].append(coord_x)
 			#print(elevation_window)
@@ -261,20 +262,44 @@ class NumpyEncoder(json.JSONEncoder):
         if isinstance(obj, np.ndarray):
             return obj.tolist()
         return super().default(obj)
-	
-output_path = os.path.join(output_dir, locationKey + "_3DEP_terrain.csv")
+######################################################################################
+conn = sqlite3.connect('tempGeo.db')
+cursor = conn.cursor()
+
+cursor.execute(f"DELETE FROM three_dep")
+conn.commit()
+
+for idx, row in enumerate(output):
+	#"lon":coord_x, "lat":coord_y, "elv_rel":elv_rel, "elv_real": elv, "idx_row": j, "idx_col": i}
+	cursor.execute(
+		f'''INSERT INTO three_dep (
+			'rowId', 'idx_row', 'idx_col',
+			'lat', 'lon',
+			'elv_rel', 'elv', 'slope'
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+		(
+			idx,
+   			to_py_type(output[idx]["idx_row"]), to_py_type(output[idx]["idx_col"]),
+			to_py_type(output[idx]["lat"]), to_py_type(output[idx]["lon"]), 
+			to_py_type(output[idx]["elv_rel"]), to_py_type(output[idx]["elv"]), 0
+		))
+
+conn.commit()
+conn.close()
+######################################################################################
+'''output_path = os.path.join(output_dir, locationKey + "_3DEP_terrain.csv")
 with open(output_path, mode="w", newline='', encoding='utf-8') as csvfile:
     fieldnames = ["lon", "lat", "elv_rel", "elv_real", "idx_row", "idx_col"]
     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
     writer.writeheader()
-    writer.writerows(output)
+    writer.writerows(output)'''
 ######################################################################################
 try:
     print("Starting 3DEP-Landsat8 composite processing...")
-    script_path = os.path.join(script_dir, "3depLs8Comp.py")
+    script_path = os.path.join(script_dir, "3depLs8CompV2.py")
     subprocess.run(["python", script_path], check=True)
 except subprocess.CalledProcessError as e:
-    print(f"Error running 3depLs8Comp.py: {e}")
+    print(f"Error running 3depLs8CompV2.py: {e}")
 except Exception as e:
-    print(f"Unexpected error running 3depLs8Comp.py: {e}")
+    print(f"Unexpected error running 3depLs8CompV2.py: {e}")
