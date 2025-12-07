@@ -5,10 +5,11 @@ import csv
 
 from scipy.stats import pearsonr
 import pandas as pd
+import sqlite3
 ######################################################################################
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from utils import get_files
+from utils import get_files, to_py_type
 ######################################################################################
 script_dir = os.path.dirname(os.path.abspath(__file__))
 split_dir = str(script_dir).split("/")
@@ -19,6 +20,9 @@ logJson = json.load(open(os.path.join(parent_dir, 'resources', "log.json")))
 locationKey = logJson["location_key"]
 ######################################################################################
 data_dir = os.path.join(parent_dir, "output", "landsat", locationKey, "arrays")
+######################################################################################
+conn = sqlite3.connect('tempGeo.db')
+cursor = conn.cursor()
 ######################################################################################
 metricKeys = ["lstf", "ndvi", "ndmi"]
 analysisStack = {}
@@ -81,13 +85,8 @@ for metricKey in metricKeys:
     
     analysisStack[f"{metricKey}_data"] = data_stack
     analysisStack[f"{metricKey}_diff"] = diff_stack
-    analysisStack[f"{metricKey}_overall_change"] = overall_change
-    analysisStack[f"{metricKey}_mean_yoy_change"] = meanYoyChange
-
-    '''print("data_stack shape: ", data_stack.shape)
-    print("diff_stack shape: ", diff_stack.shape)
-    print("overall_change shape: ", overall_change.shape)
-    print("meanYoyChange shape: ", meanYoyChange.shape)'''
+    analysisStack[f"{metricKey}_serc"] = overall_change
+    analysisStack[f"{metricKey}_arc"] = meanYoyChange
 
     rows, cols = data_stack.shape[1], data_stack.shape[2]
     #pixel_time_series = [[data_stack[:, i, j] for j in range(cols)] for i in range(rows)]
@@ -177,21 +176,29 @@ print(f"NDVI vs NDMI: mean={np.mean(all_ndvi_ndmi):.3f}, median={np.median(all_n
 coords_path = os.path.join(data_dir, f"geo_{locationKey}{suffix}")
 coords_arr = np.load(coords_path, allow_pickle=True)
 print("coords_arr shape: ", coords_arr.shape)
-
+######################################################################################
+# Clear existing entries in spectral_temporal table
+cursor.execute(f"DELETE FROM spectral_temporal")
+conn.commit()
+######################################################################################
 deciRound = 1
-with open(os.path.join(data_dir, f"ls8_{locationKey}_temporalTest.csv"), mode='w', newline='', encoding='utf-8') as file:
+with open(
+    os.path.join(data_dir, f"ls8_{locationKey}_temporal.csv"), 
+    mode='w', newline='', encoding='utf-8') as file:
+
     writer = csv.writer(file)
 
     #writer.writerow(list(temporalComposite.keys()))
     writer.writerow([
-        "lon", "lat",
-        "lstf", "lstf_total_change", "lstf_mean_yoy_change", 
-        "ndvi", "ndvi_total_change", "ndvi_mean_yoy_change",
-        "ndmi", "ndmi_total_change", "ndmi_mean_yoy_change",
-        "lstf_ndvi_corr", "lstf_ndmi_corr", "ndvi_ndmi_corr",
-        "lstf_ndvi_pval", "lstf_ndmi_pval", "ndvi_ndmi_pval"
+        'lat', 'lon', 
+        'lstf', 'lstf_serc', 'lstf_arc',
+        'ndvi', 'ndvi_serc', 'ndvi_arc', 
+        'ndmi', 'ndmi_serc', 'ndmi_arc',
+        'idx_row','idx_col',
+        'lstf_ndvi_corr','lstf_ndmi_corr', 'ndvi_ndmi_corr',
+        'lstf_ndvi_pval', 'lstf_ndmi_pval', 'ndvi_ndmi_pval'
     ])
-
+    rowId = 0
     for i in range(coords_arr.shape[0]):
         for j in range(coords_arr.shape[1]):
             coords = coords_arr[i][j]
@@ -208,26 +215,26 @@ with open(os.path.join(data_dir, f"ls8_{locationKey}_temporalTest.csv"), mode='w
                 lstf_diff = analysisStack["lstf_diff"][:, i, j].tolist()
                 lstf_diff = list(map(lambda x: round((x), deciRound), lstf_diff))
                 # lstf overall change
-                lstf_total_change = analysisStack["lstf_overall_change"][i, j]
-                #lstf_total_change = list(map(lambda x: round((x), deciRound), lstf_total_change))
+                lstf_serc = analysisStack["lstf_serc"][i, j]
+                #lstf_serc = list(map(lambda x: round((x), deciRound), lstf_serc))
                 # lstf mean year over year change
-                lstf_mean_yoy_change = analysisStack["lstf_mean_yoy_change"][i, j]
-                #lstf_mean_yoy_change = list(map(lambda x: round((x), deciRound), lstf_mean_yoy_change))
+                lstf_arc = analysisStack["lstf_arc"][i, j]
+                #lstf_arc = list(map(lambda x: round((x), deciRound), lstf_arc))
                 # ndvi difference
                 ndvi_diff = analysisStack["ndvi_diff"][:, i, j].tolist()
                 ndvi_diff = list(map(lambda x: round((x), deciRound), ndvi_diff))
                 # ndvi overall change
-                ndvi_total_change = analysisStack["ndvi_overall_change"][i, j].tolist()
-                #ndvi_total_change = list(map(lambda x: round((x), deciRound), ndvi_total_change))
+                ndvi_serc = analysisStack["ndvi_serc"][i, j].tolist()
+                #ndvi_serc = list(map(lambda x: round((x), deciRound), ndvi_serc))
                 # ndvi mean year over year change
-                ndvi_mean_yoy_change = analysisStack["ndvi_mean_yoy_change"][i, j].tolist()
-                #ndvi_mean_yoy_change = list(map(lambda x: round((x), deciRound), ndvi_mean_yoy_change))
+                ndvi_arc = analysisStack["ndvi_arc"][i, j].tolist()
+                #ndvi_arc = list(map(lambda x: round((x), deciRound), ndvi_arc))
 
                 ndmi = analysisStack["ndmi_data"][:, i, j].tolist()
                 ndmi = np.mean(list(map(lambda x: round((x), deciRound), ndmi)))
                 ndmi_diff = analysisStack["ndmi_diff"][:, i, j].tolist()
-                ndmi_total_change = analysisStack["ndmi_overall_change"][i, j].tolist()
-                ndmi_mean_yoy_change = analysisStack["ndmi_mean_yoy_change"][i, j].tolist()
+                ndmi_serc = analysisStack["ndmi_serc"][i, j].tolist()
+                ndmi_arc = analysisStack["ndmi_arc"][i, j].tolist()
 
                 lstfRangeId = None
                 for idx, lstfRange in enumerate(lstfRanges):  # Changed i to idx
@@ -256,13 +263,38 @@ with open(os.path.join(data_dir, f"ls8_{locationKey}_temporalTest.csv"), mode='w
                 pval_lstfNdmi = round(corr_data.get('lstf_ndmi_pval', np.nan), 3)
                 pval_ndviNdmi = round(corr_data.get('ndvi_ndmi_pval', np.nan), 3)
 
+
+                cursor.execute(
+                    f'''INSERT INTO spectral_temporal (
+                    'geoid', 'lat', 'lon', 
+                    'lstf', 'lstf_serc',  'lstf_arc',
+                    'ndvi',  'ndvi_serc',  'ndvi_arc', 
+                    'ndmi', 'ndmi_serc', 'ndmi_arc' ,
+                    'idx_row', 'idx_col',
+                    'lstf_ndvi_corr', 'lstf_ndmi_corr',  'ndvi_ndmi_corr',
+                    'lstf_ndvi_pval',  'lstf_ndmi_pval', 'ndvi_ndmi_pval'
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                    (   rowId,
+                        lat, lon, 
+                        to_py_type(round((lstf),2)), 
+                        to_py_type(round((lstf_serc),2)), to_py_type(round((lstf_arc),2)), 
+                        to_py_type(round((ndvi),2)), to_py_type(round((ndvi_serc),2)), to_py_type(round((ndvi_arc),2)),
+                        to_py_type(round((ndmi),2)), to_py_type(round((ndmi_serc),2)), to_py_type(round((ndmi_arc),2)),
+                        i, j,
+                        to_py_type(prc_lstfNdvi), to_py_type(prc_lstfNdmi), to_py_type(prc_ndviNdmi),
+                        to_py_type(pval_lstfNdvi), to_py_type(pval_lstfNdmi), to_py_type(pval_ndviNdmi)
+                    ))
+                rowId+=1
+                
                 writer.writerow([
+                    rowId,
                     lat, lon, 
-                    round((lstf),2), round((lstf_total_change),2), round((lstf_mean_yoy_change),2), 
-                    round((ndvi),2), round((ndvi_total_change),2), round((ndvi_mean_yoy_change),2),
-                    round((ndmi),2), round((ndmi_total_change),2), round((ndmi_mean_yoy_change),2),
+                    round((lstf),2), round((lstf_serc),2), round((lstf_arc),2), 
+                    round((ndvi),2), round((ndvi_serc),2), round((ndvi_arc),2),
+                    round((ndmi),2), round((ndmi_serc),2), round((ndmi_arc),2),
                     prc_lstfNdvi, prc_lstfNdmi, prc_ndviNdmi,
                     pval_lstfNdvi, pval_lstfNdmi, pval_ndviNdmi
                 ])
-                
+conn.commit()
+conn.close()
 print("ls8Temporal.py DONE")
