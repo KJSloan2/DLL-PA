@@ -90,7 +90,10 @@ compositeTerrain = {
 	"ndvi_ndmi_corr":[],
 	"lstf_ndvi_pval":[],
 	"lstf_ndmi_pval":[],
-	"ndvi_ndmi_pval":[]
+	"ndvi_ndmi_pval":[],
+	"lstf_temporal":[],
+	"ndvi_temporal":[],
+	"ndmi_temporal":[]
 }
 
 poolData = {
@@ -134,6 +137,13 @@ if threeDepData.empty:
 		compositeTerrain["lstf_ndvi_pval"].append(float(row["lstf_ndvi_pval"]))
 		compositeTerrain["lstf_ndmi_pval"].append(float(row["lstf_ndmi_pval"]))
 		compositeTerrain["ndvi_ndmi_pval"].append(float(row["ndvi_ndmi_pval"]))
+		# Convert from string to list of floats
+		lstf_temporal = list(map(lambda x: round(float(x), 1), row["lstf_temporal"].split(',')))
+		ndvi_temporal = list(map(lambda x: round(float(x), 1), row["ndvi_temporal"].split(',')))
+		ndmi_temporal = list(map(lambda x: round(float(x), 1), row["ndmi_temporal"].split(',')))
+		compositeTerrain["lstf_temporal"].append(lstf_temporal)
+		compositeTerrain["ndvi_temporal"].append(ndvi_temporal)
+		compositeTerrain["ndmi_temporal"].append(ndmi_temporal)
 else:
 	for idx, row in landsatData.iterrows():
 		#lon,lat,lstf,lstf_serc,lstf_arc,ndvi,ndvi_serc,ndvi_arc
@@ -195,6 +205,14 @@ else:
 		compositeTerrain["lstf_ndvi_pval"].append(ls8_cp["lstf_ndvi_pval"])
 		compositeTerrain["lstf_ndmi_pval"].append(ls8_cp["lstf_ndmi_pval"])
 		compositeTerrain["ndvi_ndmi_pval"].append(ls8_cp["ndvi_ndmi_pval"])
+
+		# Convert from string to list of floats
+		lstf_temporal = list(map(lambda x: round(float(x), 1), ls8_cp["lstf_temporal"].split(',')))
+		ndvi_temporal = list(map(lambda x: round(float(x), 1), ls8_cp["ndvi_temporal"].split(',')))
+		ndmi_temporal = list(map(lambda x: round(float(x), 1), ls8_cp["ndmi_temporal"].split(',')))
+		compositeTerrain["lstf_temporal"].append(lstf_temporal)
+		compositeTerrain["ndvi_temporal"].append(ndvi_temporal)
+		compositeTerrain["ndmi_temporal"].append(ndmi_temporal)
 
 ######################################################################################
 outputFileName = locationKey+'_3depLs8Comp.csv'
@@ -290,6 +308,9 @@ df_compositeTerrain = pd.DataFrame({
 	"lstf_ndvi_pval": compositeTerrain["lstf_ndvi_pval"],
 	"lstf_ndmi_pval": compositeTerrain["lstf_ndmi_pval"],
 	"ndvi_ndmi_pval": compositeTerrain["ndvi_ndmi_pval"],
+	"lstf_temporal": compositeTerrain["lstf_temporal"],
+	"ndvi_temporal": compositeTerrain["ndvi_temporal"],
+	"ndmi_temporal": compositeTerrain["ndmi_temporal"]
 })
 
 ######################################################################################
@@ -356,7 +377,8 @@ with open(os.path.join(r"output\3dep\test.csv"), mode='w', newline='', encoding=
 		"elv_rel", "elv", "idx_row", "idx_col",
 		"mdrdasp", "mdrdconc", "mdrdgrv", "mdrdunp", "mdconst", "mdbldg",
 		"lstf_ndvi_corr", "lstf_ndmi_corr", "ndvi_ndmi_corr",
-		"lstf_ndvi_pval", "lstf_ndmi_pval", "ndvi_ndmi_pval", "land_cover"
+		"lstf_ndvi_pval", "lstf_ndmi_pval", "ndvi_ndmi_pval", "land_cover",
+		"lstf_temporal", "ndvi_temporal", "ndmi_temporal"
 		])
 	
 	distance_by_srf = {
@@ -397,7 +419,7 @@ with open(os.path.join(r"output\3dep\test.csv"), mode='w', newline='', encoding=
 		# Reset distances for this terrain point
 		for srfKey in distance_by_srf.keys():
 			distance_by_srf[srfKey]["dist"] = []
-			distance_by_srf[srfKey]["mean_dist"] = None
+			distance_by_srf[srfKey]["mean_dist"] = 1000
 		
 		# Query all OSM feature categories for this terrain point
 		for osmFturCategory, treeData in osmFeatureTrees.items():
@@ -487,7 +509,8 @@ with open(os.path.join(r"output\3dep\test.csv"), mode='w', newline='', encoding=
 				distance_by_srf["construction"]["mean_dist"],
 				distance_by_srf["building"]["mean_dist"],
 				dfRow["lstf_ndvi_corr"], dfRow["lstf_ndmi_corr"], dfRow["ndvi_ndmi_corr"],
-				dfRow["lstf_ndvi_pval"], dfRow["lstf_ndmi_pval"], dfRow["ndvi_ndmi_pval"], landCover
+				dfRow["lstf_ndvi_pval"], dfRow["lstf_ndmi_pval"], dfRow["ndvi_ndmi_pval"], landCover,
+				dfRow["lstf_temporal"], dfRow["ndvi_temporal"], dfRow["ndmi_temporal"]
 			])
 			
 		except Exception as e:
