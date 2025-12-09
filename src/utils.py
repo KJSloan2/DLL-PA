@@ -1,6 +1,8 @@
 import os
 import numpy as np
 import fiona
+import math
+from shapely.geometry import MultiLineString, Polygon, Point, mapping
 ######################################################################################
 def calc_yoy_change(data):
 	storePrctDeltas = []
@@ -172,3 +174,34 @@ def get_project_paths():
 		"parent": parent_dir,
 		"root": root_dir
 	}
+######################################################################################
+def to_py_type(val):
+    """Convert NumPy types to native Python types for SQLite"""
+    if isinstance(val, (np.integer, np.int64, np.int32)):
+        return int(val)
+    elif isinstance(val, (np.floating, np.float64, np.float32)):
+        if np.isnan(val):
+            return None  # Store NaN as NULL in SQLite
+        return float(val)
+    elif isinstance(val, np.ndarray):
+        return val.item()  # Extract scalar from 0-d array
+    return val
+######################################################################################
+def safe_round(value, decimals=1):
+    """Safely round a value, returning None if value is None"""
+    return round(value, decimals) if value is not None else None
+######################################################################################
+def polygon_filter(lon, lat, polygon):
+    """Check if a point falls within a polygon
+    
+    Args:
+        lon: Longitude of the point
+        lat: Latitude of the point
+        polygon: A Shapely Polygon object
+        
+    Returns:
+        bool: True if point is within polygon, False otherwise
+    """
+    point = Point(lon, lat)
+    return polygon.contains(point)
+######################################################################################
