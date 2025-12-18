@@ -10,16 +10,28 @@ import sqlite3
 import pandas as pd
 import numpy as np
 from geopy.distance import geodesic
+import shapely
 from shapely.geometry import Point, Polygon
 from scipy.spatial import cKDTree
 from datetime import datetime
+'''from shapely.geometry import MultiLineString, Polygon, MultiPolygon, Point, shape, mapping
+from shapely.geometry.base import BaseGeometry'''
+################### ###################################################################
+APPLY_SPATIAL_FILTER = False
 ######################################################################################
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from utils import  json_serialize
-from utils import make_new_geojson_feature
+from utils import safe_round, polygon_filter
 ######################################################################################
 def list_files(directory):
 	return [f for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f))]
+######################################################################################
+if APPLY_SPATIAL_FILTER:
+	filterPolygonFileName = "aoi_polygon_2025-12-09.geojson"
+	filterPolygonFile_path = os.path.join(r"data", "spatial_filters", filterPolygonFileName)
+	with open(filterPolygonFile_path) as f:
+		filterPolygonJson = json.load(f)
+	filterPolygonCoords = filterPolygonJson["features"][0]["geometry"]["coordinates"]
+	filterPolygon = shapely.geometry.shape(filterPolygonJson["features"][0]["geometry"])
 ######################################################################################
 conn = sqlite3.connect('tempGeo.db')
 cursor = conn.cursor()
@@ -28,7 +40,7 @@ query = f"SELECT * FROM spectral_temporal"
 cursor.execute(query)
 rows_spectralTemporal = cursor.fetchall()
 columnNames_spectralTemporal = [description[0] for description in cursor.description]
-landsatData = pd.DataFrame(rows_spectralTemporal, columns=columnNames_spectralTemporal)
+multiSpecData = pd.DataFrame(rows_spectralTemporal, columns=columnNames_spectralTemporal)
 ######################################################################################
 query = f"SELECT * FROM three_dep"
 cursor.execute(query)
@@ -39,9 +51,29 @@ threeDepData = pd.DataFrame(rows_threeDep, columns=columnNames_threeDep)
 script_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.abspath(os.path.join(script_dir, "..", ".."))
 root_dir = os.path.abspath(os.path.join(parent_dir, ".."))
-
+######################################################################################
 logJson = json.load(open(os.path.join(parent_dir, 'resources', "log.json")))
 locationKey = logJson["location_key"]
+######################################################################################
+print(locationKey)
+conn_refDb = sqlite3.connect('ref.db')
+cursor_refDb = conn_refDb.cursor()
+cursor_refDb.execute("SELECT HAS_HYDRO_FEATURES FROM site_info WHERE NAME = ?", (locationKey,))
+result_siteInfo = cursor_refDb.fetchone()
+hasHydroFeatures = result_siteInfo[0] == "True"
+hydroFeatureGeom = []
+if hasHydroFeatures:
+	hydroFeatures_fName = locationKey+"_hydro.geojson"
+	hydroFeatures_geojson_path = os.path.join("data", "hydro", hydroFeatures_fName)
+	with open(hydroFeatures_geojson_path, "r") as hydroFeatures_geojson_file:
+		hydroFeatures_geojson = json.load(hydroFeatures_geojson_file)
+		for feature in hydroFeatures_geojson["features"]:
+			feature_geometry = feature["geometry"]
+			geometry_type = feature_geometry["type"]
+			if geometry_type == "Polygon":
+				hydroFeatureGeom.append(Polygon(feature_geometry["coordinates"][0]))
+
+######################################################################################
 
 publicTerrain_dir = os.path.join(root_dir, "output", "terrain")
 #lib_dir = os.path.join(root_dir, "frontend", "src", "lib")
@@ -74,26 +106,14 @@ landsatPoints = []
 ######################################################################################
 compositeTerrain = {
 	"lat":[], "lon":[],
-	"lstf":[], 
-	"lstf_serc":[],
-	"lstf_arc":[],
-	"ndvi":[],
-	"ndvi_serc":[],
-	"ndvi_arc":[],
-	"ndmi":[],
-	"ndmi_serc":[],
-	"ndmi_arc":[],
+	"lstf":[], "lstf_serc":[], "lstf_arc":[],
+	"ndvi":[], "ndvi_serc":[], "ndvi_arc":[],
+	"ndmi":[], "ndmi_serc":[], "ndmi_arc":[],
 	"elv_rel":[], "elv":[],
 	"idx_row":[], "idx_col":[],
-	"lstf_ndvi_corr":[],
-	"lstf_ndmi_corr":[],
-	"ndvi_ndmi_corr":[],
-	"lstf_ndvi_pval":[],
-	"lstf_ndmi_pval":[],
-	"ndvi_ndmi_pval":[],
-	"lstf_temporal":[],
-	"ndvi_temporal":[],
-	"ndmi_temporal":[]
+	"lstf_ndvi_corr":[], "lstf_ndmi_corr":[], "ndvi_ndmi_corr":[],
+	"lstf_ndvi_pval":[], "lstf_ndmi_pval":[], "ndvi_ndmi_pval":[],
+	"lstf_temporal":[], "ndvi_temporal":[], "ndmi_temporal":[]
 }
 
 poolData = {
@@ -115,7 +135,7 @@ def append_pool(metricKey, value, pool=poolData):
 
 if threeDepData.empty:
 	print("No 3DEP data found for the location, using Landsat data only.")
-	for idx, row in landsatData.iterrows():
+	for idx, row in multiSpecData.iterrows():
 		compositeTerrain["lat"].append(float(row["lat"]))
 		compositeTerrain["lon"].append(float(row["lon"]))
 		compositeTerrain["lstf"].append(float(row["lstf"]))
@@ -145,7 +165,7 @@ if threeDepData.empty:
 		compositeTerrain["ndvi_temporal"].append(ndvi_temporal)
 		compositeTerrain["ndmi_temporal"].append(ndmi_temporal)
 else:
-	for idx, row in landsatData.iterrows():
+	for idx, row in multiSpecData.iterrows():
 		#lon,lat,lstf,lstf_serc,lstf_arc,ndvi,ndvi_serc,ndvi_arc
 		lstf = row["lstf"]
 		lstf_serc = row["lstf_serc"]
@@ -171,48 +191,53 @@ else:
 	landsatCkdTree = cKDTree(landsatCkdTreePoints)
 	######################################################################################
 	for idx, threeDepPt in threeDepData.iterrows():
-		query_coords = np.array([threeDepPt['lon'], threeDepPt['lat']])
-		distance, index = landsatCkdTree.query(query_coords)
-		ls8_cp = landsatData.iloc[index]
-		# lstf
-		lstfSerc = ls8_cp["lstf_serc"]
-		lstfArc = ls8_cp["lstf_arc"]
-		# ndvi
-		ndviSerc = ls8_cp["ndvi_serc"]
-		ndviArc = ls8_cp["ndvi_arc"]
-		# ndmi
-		ndmiSerc = ls8_cp["ndmi_serc"]
-		ndmiArc = ls8_cp["ndmi_arc"]
+		addPoint = True
+		lat, lon = threeDepPt['lat'], threeDepPt['lon']
+		if APPLY_SPATIAL_FILTER:
+			addPoint = polygon_filter(lon, lat, filterPolygon)
+		if addPoint == True:
+			query_coords = np.array([threeDepPt['lon'], threeDepPt['lat']])
+			distance, index = landsatCkdTree.query(query_coords)
+			msd_cp = multiSpecData.iloc[index]
+			# lstf
+			lstfSerc = msd_cp["lstf_serc"]
+			lstfArc = msd_cp["lstf_arc"]
+			# ndvi
+			ndviSerc = msd_cp["ndvi_serc"]
+			ndviArc = msd_cp["ndvi_arc"]
+			# ndmi
+			ndmiSerc = msd_cp["ndmi_serc"]
+			ndmiArc = msd_cp["ndmi_arc"]
 
-		compositeTerrain["elv_rel"].append(float(threeDepPt["elv_rel"]))
-		compositeTerrain["elv"].append(float(threeDepPt["elv"]))
-		compositeTerrain["lat"].append(float(threeDepPt["lat"]))
-		compositeTerrain["lon"].append(float(threeDepPt["lon"]))
-		compositeTerrain["lstf"].append(float(ls8_cp["lstf"]))
-		compositeTerrain["lstf_serc"].append(float(lstfSerc))
-		compositeTerrain["lstf_arc"].append(float(lstfArc))
-		compositeTerrain["ndvi"].append(float(ls8_cp["ndvi"]))
-		compositeTerrain["ndvi_serc"].append(float(ndviSerc))
-		compositeTerrain["ndvi_arc"].append(float(ndviArc))
-		compositeTerrain["ndmi"].append(float(ls8_cp["ndmi"]))
-		compositeTerrain["ndmi_serc"].append(float(ndmiSerc))
-		compositeTerrain["ndmi_arc"].append(float(ndmiArc))
-		compositeTerrain["idx_row"].append(int(threeDepPt["idx_row"]))
-		compositeTerrain["idx_col"].append(int(threeDepPt["idx_col"]))
-		compositeTerrain["lstf_ndvi_corr"].append(ls8_cp["lstf_ndvi_corr"])
-		compositeTerrain["lstf_ndmi_corr"].append(ls8_cp["lstf_ndmi_corr"])
-		compositeTerrain["ndvi_ndmi_corr"].append(ls8_cp["ndvi_ndmi_corr"])
-		compositeTerrain["lstf_ndvi_pval"].append(ls8_cp["lstf_ndvi_pval"])
-		compositeTerrain["lstf_ndmi_pval"].append(ls8_cp["lstf_ndmi_pval"])
-		compositeTerrain["ndvi_ndmi_pval"].append(ls8_cp["ndvi_ndmi_pval"])
+			compositeTerrain["elv_rel"].append(float(threeDepPt["elv_rel"]))
+			compositeTerrain["elv"].append(float(threeDepPt["elv"]))
+			compositeTerrain["lat"].append(float(threeDepPt["lat"]))
+			compositeTerrain["lon"].append(float(threeDepPt["lon"]))
+			compositeTerrain["lstf"].append(float(msd_cp["lstf"]))
+			compositeTerrain["lstf_serc"].append(float(lstfSerc))
+			compositeTerrain["lstf_arc"].append(float(lstfArc))
+			compositeTerrain["ndvi"].append(float(msd_cp["ndvi"]))
+			compositeTerrain["ndvi_serc"].append(float(ndviSerc))
+			compositeTerrain["ndvi_arc"].append(float(ndviArc))
+			compositeTerrain["ndmi"].append(float(msd_cp["ndmi"]))
+			compositeTerrain["ndmi_serc"].append(float(ndmiSerc))
+			compositeTerrain["ndmi_arc"].append(float(ndmiArc))
+			compositeTerrain["idx_row"].append(int(threeDepPt["idx_row"]))
+			compositeTerrain["idx_col"].append(int(threeDepPt["idx_col"]))
+			compositeTerrain["lstf_ndvi_corr"].append(msd_cp["lstf_ndvi_corr"])
+			compositeTerrain["lstf_ndmi_corr"].append(msd_cp["lstf_ndmi_corr"])
+			compositeTerrain["ndvi_ndmi_corr"].append(msd_cp["ndvi_ndmi_corr"])
+			compositeTerrain["lstf_ndvi_pval"].append(msd_cp["lstf_ndvi_pval"])
+			compositeTerrain["lstf_ndmi_pval"].append(msd_cp["lstf_ndmi_pval"])
+			compositeTerrain["ndvi_ndmi_pval"].append(msd_cp["ndvi_ndmi_pval"])
 
-		# Convert from string to list of floats
-		lstf_temporal = list(map(lambda x: round(float(x), 1), ls8_cp["lstf_temporal"].split(',')))
-		ndvi_temporal = list(map(lambda x: round(float(x), 1), ls8_cp["ndvi_temporal"].split(',')))
-		ndmi_temporal = list(map(lambda x: round(float(x), 1), ls8_cp["ndmi_temporal"].split(',')))
-		compositeTerrain["lstf_temporal"].append(lstf_temporal)
-		compositeTerrain["ndvi_temporal"].append(ndvi_temporal)
-		compositeTerrain["ndmi_temporal"].append(ndmi_temporal)
+			# Convert from string to list of floats
+			lstf_temporal = list(map(lambda x: round(float(x), 1), msd_cp["lstf_temporal"].split(',')))
+			ndvi_temporal = list(map(lambda x: round(float(x), 1), msd_cp["ndvi_temporal"].split(',')))
+			ndmi_temporal = list(map(lambda x: round(float(x), 1), msd_cp["ndmi_temporal"].split(',')))
+			compositeTerrain["lstf_temporal"].append(lstf_temporal)
+			compositeTerrain["ndvi_temporal"].append(ndvi_temporal)
+			compositeTerrain["ndmi_temporal"].append(ndmi_temporal)
 
 ######################################################################################
 outputFileName = locationKey+'_3depLs8Comp.csv'
@@ -278,10 +303,11 @@ for i in range(len(compositeTerrain["lstf"])):
 	ndviArc = compositeTerrain["ndvi_arc"][i]
 	ndmiArc = compositeTerrain["ndmi_arc"][i]
 
+	print(ndviArc)
+
 	compositeTerrain["lstf_flag"].append(create_flag("lstf", lstfArc))
 	compositeTerrain["ndvi_flag"].append(create_flag("ndvi", ndviArc))
 	compositeTerrain["ndmi_flag"].append(create_flag("ndmi", ndmiArc))
-
 #--------------------------------------------------------------------------------------
 df_compositeTerrain = pd.DataFrame({
 	"lstf": compositeTerrain["lstf"],
@@ -367,9 +393,11 @@ def classify_land_cover(ndvi, ndmi, refFeatDist):
 	return landCoverClassification
 
 #write to csv
-with open(os.path.join(r"output\3dep\test.csv"), mode='w', newline='', encoding='utf-8') as file:
+#C:\Users\Kjslo\Documents\local_dev\dynamic_lands_lab\frontend\public\terrain
+#r"output", "3dep", locationKey+".csv"
+with open(os.path.join(r"C:\Users\Kjslo\Documents\local_dev\dynamic_lands_lab\frontend\public\terrain", locationKey+".csv"), mode='w', newline='', encoding='utf-8') as file:
 	writer = csv.writer(file)
-	
+	 
 	writer.writerow([
 		"geoid", "lat", "lon", "lstf", "lstf_serc", "lstf_arc",
 		"lstf_flag", "ndvi", "ndvi_serc", " ndvi_arc", "ndvi_flag",
@@ -414,6 +442,7 @@ with open(os.path.join(r"output\3dep\test.csv"), mode='w', newline='', encoding=
 
 	# Now process each terrain point once
 	for idx, dfRow in df_compositeTerrain.iterrows():
+		#ctLat, ctLon = dfRow['lat'], dfRow['lon']
 		terrainPt = np.array([dfRow['lon'], dfRow['lat']])
 
 		# Reset distances for this terrain point
@@ -445,7 +474,14 @@ with open(os.path.join(r"output\3dep\test.csv"), mode='w', newline='', encoding=
 						distance_by_srf["building"]["dist"].append(distanceFt)
 					elif osmFturCategory == "construction":
 						distance_by_srf["construction"]["dist"].append(distanceFt)
-		
+				else:
+					maxDistanceFt = (0.005 * 100000) / 3.28
+					if srf in distance_by_srf:
+						distance_by_srf[srf]["dist"].append(maxDistanceFt)
+					elif osmFturCategory == "building":
+						distance_by_srf["building"]["dist"].append(maxDistanceFt)
+					elif osmFturCategory == "construction":
+						distance_by_srf["construction"]["dist"].append(maxDistanceFt)
 		# Calculate mean distances for this terrain point
 		for srfKey, obj in distance_by_srf.items():
 			if obj["dist"]:
@@ -494,28 +530,55 @@ with open(os.path.join(r"output\3dep\test.csv"), mode='w', newline='', encoding=
 			}
 
 			landCover = classify_land_cover(dfRow["ndvi"], dfRow["ndmi"], distanceToRefFeatures)
+
+			query_pt = Point(dfRow["lon"], dfRow["lat"])
+			if hasHydroFeatures:
+				for hydroFeature in hydroFeatureGeom:
+					if hydroFeature.contains(query_pt):
+						landCover = "WD"
+
+
+			lstf_temporal_str = f"[{','.join([f'{x:.1f}' for x in dfRow['lstf_temporal']])}]"
+			ndvi_temporal_str = f"[{','.join([f'{x:.1f}' for x in dfRow['ndvi_temporal']])}]"
+			ndmi_temporal_str = f"[{','.join([f'{x:.1f}' for x in dfRow['ndmi_temporal']])}]"
 			# Write to CSV once per terrain point
 			writer.writerow([
 				idx, dfRow["lat"], dfRow["lon"],
-				dfRow["lstf"], dfRow["lstf_serc"], dfRow["lstf_arc"], dfRow["lstf_flag"], 
-				dfRow["ndvi"], dfRow["ndvi_serc"], dfRow["ndvi_arc"], dfRow["ndvi_flag"], 
-				dfRow["ndmi"], dfRow["ndmi_serc"], dfRow["ndmi_arc"], dfRow["ndmi_flag"],
-				dfRow["elv_rel"], dfRow["elv"], 
+				safe_round(dfRow["lstf"], 1), 
+				safe_round(dfRow["lstf_serc"], 1), 
+				safe_round(dfRow["lstf_arc"], 1),
+				dfRow["lstf_flag"], 
+				safe_round(dfRow["ndvi"], 1),
+				safe_round(dfRow["ndvi_serc"], 1),
+				safe_round(dfRow["ndvi_arc"], 1), 
+				dfRow["ndvi_flag"], 
+				safe_round(dfRow["ndmi"], 1), 
+				safe_round(dfRow["ndmi_serc"], 1), 
+				safe_round(dfRow["ndmi_arc"], 1),
+				dfRow["ndmi_flag"],
+				safe_round(dfRow["elv_rel"], 1), 
+				safe_round(dfRow["elv"], 1), 
 				dfRow["idx_row"], dfRow["idx_col"], 
-				distance_by_srf["asphalt"]["mean_dist"],
-				distance_by_srf["concrete"]["mean_dist"], 
-				distance_by_srf["gravel"]["mean_dist"],
-				distance_by_srf["unpaved"]["mean_dist"], 
-				distance_by_srf["construction"]["mean_dist"],
-				distance_by_srf["building"]["mean_dist"],
-				dfRow["lstf_ndvi_corr"], dfRow["lstf_ndmi_corr"], dfRow["ndvi_ndmi_corr"],
-				dfRow["lstf_ndvi_pval"], dfRow["lstf_ndmi_pval"], dfRow["ndvi_ndmi_pval"], landCover,
-				dfRow["lstf_temporal"], dfRow["ndvi_temporal"], dfRow["ndmi_temporal"]
+				safe_round(distance_by_srf["asphalt"]["mean_dist"], 1),
+				safe_round(distance_by_srf["concrete"]["mean_dist"], 1), 
+				safe_round(distance_by_srf["gravel"]["mean_dist"], 1),
+				safe_round(distance_by_srf["unpaved"]["mean_dist"], 1), 
+				safe_round(distance_by_srf["construction"]["mean_dist"], 1),
+				safe_round(distance_by_srf["building"]["mean_dist"], 1),
+				safe_round(dfRow["lstf_ndvi_corr"], 1),
+				safe_round(dfRow["lstf_ndmi_corr"], 1),
+				safe_round(dfRow["ndvi_ndmi_corr"], 1),
+				safe_round(dfRow["lstf_ndvi_pval"], 1), 
+				safe_round(dfRow["lstf_ndmi_pval"], 1), 
+				safe_round(dfRow["ndvi_ndmi_pval"], 1),
+				landCover,
+				lstf_temporal_str,
+				ndvi_temporal_str,
+				ndmi_temporal_str
 			])
-			
 		except Exception as e:
 			print(f"Error inserting row {idx}: {e}")
-	
+
 conn.commit()
 conn.close()
-print("Composite data saved to database.")  
+print("Composite data saved to database.")
