@@ -1,129 +1,62 @@
-import requests
-import json
 import os
+import sys
+import json
 import subprocess
+######################################################################################
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from utils import  json_serialize, to_py_type
+from osmUtils import get_osm_overpy_bbox, osm_req_bbox
+from spatial_utils import complete_bbox
 ######################################################################################
 script_dir = os.path.dirname(os.path.abspath(__file__))
 split_dir = str(script_dir).split("/")
 parent_dir = os.path.abspath(os.path.join(script_dir, "..", ".."))
 root_dir = os.path.abspath(os.path.join(parent_dir, ".."))
 
-lib_dir = os.path.join(root_dir, "frontend", "src", "lib")
-siteFileMap = json.load(open(os.path.join(lib_dir, "siteFileMap.json")))
+'''lib_dir = os.path.join(root_dir, "frontend", "src", "lib")
+siteFileMap = json.load(open(os.path.join(lib_dir, "siteFileMap.json")))'''
 
 logJson = json.load(open(os.path.join(parent_dir, 'resources', "log.json")))
-locationKey = logJson["location_key"]
+locationId = logJson["location_key"]
 
-dataDirectory = os.path.join(parent_dir, 'data', 'landsat', locationKey)
+dataDirectory = os.path.join(parent_dir, 'data', 'osm')
 outputDirectory = os.path.join(parent_dir, 'output', 'osm')
 ######################################################################################
-#publicTerrain_dir = os.path.join(root_dir, "frontend", "public", "landsat")
+# get  years and convert to int for sorting
+analysisYears = sorted(list(map(int, logJson["ls8_bounds"].keys())))
+# get bb at earliet year, convert back to str for dict access
+bb_ls = logJson["ls8_bounds"][str(analysisYears[0])]["bb"]
+bbox = complete_bbox((bb_ls[0][0], bb_ls[0][1]), (bb_ls[1][0], bb_ls[1][1]))
 
-'''building	house, school, commercial, yes, etc.
-amenity	school, hospital, restaurant, toilets
-highway	residential, primary, footway, bus_stop
-landuse	residential, commercial, industrial
-leisure	park, swimming_pool, stadium
-shop	supermarket, bakery, clothes
-natural	tree, water, peak, beach
-tourism	hotel, museum, camp_site
-railway	station, tram_stop, rail
-man_made	tower, bridge, storage_tank
-waterway	river, stream, canal
-place	city, village, hamlet, suburb
-boundary	administrative, national_park
-power	substation, generator, line'''
+west_lon = min(bbox["pt_sw"][0], bbox["pt_ne"][0])
+east_lon = max(bbox["pt_sw"][0], bbox["pt_ne"][0])
+south_lat = min(bbox["pt_sw"][1], bbox["pt_ne"][1])
+north_lat = max(bbox["pt_sw"][1], bbox["pt_ne"][1])
+bbStr = f"{south_lat},{west_lon},{north_lat},{east_lon}"
 
-#coordinates = logJson["site_centroid"]
-coordinates = logJson["ls8_bounds"]["2014"]["centroid"]
-print(coordinates)
+print(bbStr)
+bb_geoJsom = {
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [bbox["pt_sw"][0], bbox["pt_sw"][1]],
+                    [bbox["pt_nw"][0], bbox["pt_nw"][1]],
+                    [bbox["pt_ne"][0], bbox["pt_ne"][1]],
+                    [bbox["pt_se"][0], bbox["pt_se"][1]],
+                    [bbox["pt_sw"][0], bbox["pt_sw"][1]],
+                    ]]}
+        },
+    ]
+}
 
-apis = ["highway", "building"]
-api = apis[1]
-radius = 10000
-
-query = f"""
-[out:json];
-(
-  way["{api}"](around:{radius}, {coordinates[0]}, {coordinates[1]});
-);
-out body;
->;
-out skel qt;
-"""
-
-response = requests.post(
-    "https://overpass-api.de/api/interpreter",
-    data={"data": query}
-)
-osmData = response.json()
-
-'''outputFileName = 'SGF_OSM_Highway-2500.json'
-outputPath = os.path.join(parent_dir, 'output', 'osm', outputFileName)
+outputPath = os.path.join(parent_dir, 'data', 'osm', "TEST_bbox.geojson")
 with open(outputPath, "w", encoding='utf-8') as output_json:
-	output_json.write(json.dumps(data, ensure_ascii=False))'''
-	
-def overpass_to_geojson(overpass_data):
-    elements = overpass_data['elements']
-    nodes = {}
-    features = []
+    output_json.write(json.dumps(bb_geoJsom, ensure_ascii=False))
 
-    # Step 1: Build a node lookup table
-    for el in elements:
-        if el['type'] == 'node':
-            nodes[el['id']] = [el['lon'], el['lat']]
-
-    # Step 2: Convert each element to GeoJSON feature
-    for el in elements:
-        if el['type'] == 'node':
-            features.append({
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [el["lon"], el["lat"]],
-                },
-                "properties": el.get("tags", {}),
-            })
-
-        elif el['type'] == 'way':
-            try:
-                coords = [nodes[node_id] for node_id in el['nodes']]
-                geom_type = "LineString"
-
-                # Close the polygon if first = last
-                if coords[0] == coords[-1] and len(coords) >= 4:
-                    geom_type = "Polygon"
-                    coords = [coords]  # Wrap in extra array for Polygon format
-
-                features.append({
-                    "type": "Feature",
-                    "geometry": {
-                        "type": geom_type,
-                        "coordinates": coords,
-                    },
-                    "properties": el.get("tags", {}),
-                })
-            except KeyError:
-                print(f"Missing node for way {el['id']}, skipping")
-
-    return {
-        "type": "FeatureCollection",
-        "features": features,
-    }
-
-osmData_geojson = overpass_to_geojson(osmData)
-
-outputFileName = locationKey+'_OSM_'+api+'.geojson'
-outputPath = os.path.join(parent_dir, 'data', 'osm', outputFileName)
-with open(outputPath, "w", encoding='utf-8') as output_json:
-    output_json.write(json.dumps(osmData_geojson, ensure_ascii=False))
-
-try:
-    print("Starting cleanOsmBuildings...")
-    script_path = os.path.join(script_dir, "cleanOsmBuildings.py")
-    subprocess.run(["python", script_path], check=True)
-except subprocess.CalledProcessError as e:
-    print(f"Error running cleanOsmBuildings.py: {e}")
-except Exception as e:
-    print(f"Unexpected error running cleanOsmBuildings.py: {e}")
-print("DONE")
+######################################################################################
+osm_req_bbox(locationId, bbStr, ["building", "highway", "construction"], dataDirectory)
+######################################################################################
