@@ -1,40 +1,33 @@
 import os
+import sys
 import sqlite3
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from sqlite_utils import create_table
 
+DROP = True
 args = {
-    "make_osm_srf_table": True,
+    "make_osm_srf_table": False,
     "make_composite_table": True,
-    "make_spectral_table": True,
-    "make_threeDep_table": True
+    "make_spectral_table": False,
+    "make_threeDep_table": False
 }
 
 conn = sqlite3.connect('tempGeo.db')
 
-def create_table(table_name, columns):
-    cursor = conn.cursor()
-    # Create a dynamic SQL query to create a table
-    column_defs = ', '.join([f"{col} {dtype}" for col, dtype in columns.items()])
-    query = f"CREATE TABLE IF NOT EXISTS {table_name} ({column_defs})"
-    # Execute the query
-    cursor.execute(query)
-    # Commit and close
-    conn.commit()
-    print(table_name)
-
-if args["make_osm_srf_table"]:
+if args["make_osm_srf_table"] == True:
     #"railway", "waterway", "aeroway", "powerline", "pipeline"
     osmFeatureTags = ["highway_srf", "building_srf", "construction_srf"]
     for tag in osmFeatureTags:
-        create_table(tag, {
+        create_table(conn, tag, {
             'geoid': 'INTEGER PRIMARY KEY',
             'lat': 'FLOAT',
             'lon': 'FLOAT', 
             'srf': 'TEXT', 
-            })
+            }, DROP)
 
-if args["make_composite_table"]:
+if args["make_composite_table"] == True:
     # Create table for 3Dep + LS8 composite data
-    create_table('terrainComposite', {
+    create_table(conn, 'terrain_composite', {
         'geoid': 'INTEGER PRIMARY KEY',
         'lat': 'FLOAT',
         'lon': 'FLOAT', 
@@ -65,12 +58,17 @@ if args["make_composite_table"]:
         'ndvi_ndmi_corr': 'FLOAT',
         'lstf_ndvi_pval': 'FLOAT', 
         'lstf_ndmi_pval': 'FLOAT', 
-        'ndvi_ndmi_pval': 'FLOAT'
-        })
+        'ndvi_ndmi_pval': 'FLOAT',
+        'lstf_temporal': 'TEXT',
+        'ndvi_temporal': 'TEXT',
+        'ndmi_temporal': 'TEXT',
+        'ls_land_cover': 'TEXT',
+        'cl_land_cover': 'INTEGER',
+        }, DROP)
 
-if args["make_spectral_table"]:
+if args["make_spectral_table"] == True:
     # Create table for 3Dep + LS8 composite data
-    create_table('spectral_temporal', {
+    create_table(conn, 'spectral_temporal', {
         'geoid': 'INTEGER PRIMARY KEY',
         'lat': 'FLOAT',
         'lon': 'FLOAT', 
@@ -90,12 +88,15 @@ if args["make_spectral_table"]:
         'ndvi_ndmi_corr': 'FLOAT',
         'lstf_ndvi_pval': 'FLOAT', 
         'lstf_ndmi_pval': 'FLOAT', 
-        'ndvi_ndmi_pval': 'FLOAT'
-        })
+        'ndvi_ndmi_pval': 'FLOAT',
+        'lstf_temporal': 'TEXT',
+        'ndvi_temporal': 'TEXT',
+        'ndmi_temporal': 'TEXT',
+        }, DROP)
 
-if args["make_threeDep_table"]:
+if args["make_threeDep_table"] == True:
     # Create table for 3Dep + LS8 composite data
-    create_table('three_dep', {
+    create_table(conn, 'three_dep', {
         'rowId': 'INTEGER PRIMARY KEY',
         'idx_row': 'INTEGER',
         'idx_col': 'INTEGER',
@@ -104,7 +105,7 @@ if args["make_threeDep_table"]:
         'elv_rel': 'FLOAT',
         'elv': 'FLOAT',
         'slope': 'FLOAT',
-        })
-
+        }, DROP)
     
+conn.commit()
 conn.close()
