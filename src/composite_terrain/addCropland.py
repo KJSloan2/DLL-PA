@@ -96,31 +96,43 @@ tempGeo_keys = [description[0] for description in cursor_tempGeo.description]
 tempGeo_rows = cursor_tempGeo.fetchall()
 
 # ckdTree distance threshold in meters
-DIST_THRESH = 35
+DIST_THRESH = 30
 update_count = 0
 
+landCoverValsReplaced = 0
 for row in tempGeo_rows:
-    rowDict = dict(zip(tempGeo_keys, row))
-    geoid = rowDict['geoid']
-    query_coords = np.array([rowDict['lon'], rowDict['lat']])
-    distance, cpidx = cld_ckdTree.query(query_coords)
-    cp_data = cdlDataframe.iloc[cpidx]
-    cp_lat, cp_lon = cp_data['LAT'], cp_data['LON']
-    hDist = haversine(query_coords, [cp_lon, cp_lat])["m"]
-    
-    if hDist <= DIST_THRESH:
-        lcVal, lcLabel = cp_data['LC_VAL'], cp_data['LC_LABEL']
-        
-        # Update the terrain_composite table
-        cursor_tempGeo.execute(
-            "UPDATE terrain_composite SET ls_land_cover = ? WHERE geoid = ?",
-            (int(lcVal), geoid)
-        )
-        update_count += 1
-        
-        if update_count % 1000 == 0:
-            print(f"Updated {update_count} rows...")
-            conn_tempGeo.commit()
+	rowDict = dict(zip(tempGeo_keys, row))
+	geoid = rowDict['geoid']
+	lsVal = rowDict.get('ls_land_cover', None)
+	query_coords = np.array([rowDict['lon'], rowDict['lat']])
+	distance, cpidx = cld_ckdTree.query(query_coords)
+	cp_data = cdlDataframe.iloc[cpidx]
+	cp_lat, cp_lon = cp_data['LAT'], cp_data['LON']
+	hDist = haversine(query_coords, [cp_lon, cp_lat])["m"]
+	
+	if hDist <= DIST_THRESH:
+		lcVal, lcLabel = cp_data['LC_VAL'], cp_data['LC_LABEL']
+
+		# Override with Landsat land cover if lsVal is barren
+		if lsVal == "BN":
+			lcVal = 65
+			landCoverValsReplaced+=1
+		# USDA defined 65 AND 131 as barren. Simplify to 65 only
+		if lcVal == 131:
+			lcVal = 65
+
+		# Update the terrain_composite table
+		cursor_tempGeo.execute(
+			"UPDATE terrain_composite SET  cl_land_cover = ? WHERE geoid = ?",
+			(int(lcVal), geoid)
+		)
+		update_count += 1
+		
+		if update_count % 1000 == 0:
+			print(f"Updated {update_count} rows...")
+			conn_tempGeo.commit()
+
+print(f"Total land cover values replaced: {landCoverValsReplaced}")
 
 # Final commit
 conn_tempGeo.commit()
@@ -128,3 +140,5 @@ print(f"Total rows updated: {update_count}")
 
 conn_tempGeo.close()
 conn_cdl.close()
+
+print("addCropland.py completed.")
