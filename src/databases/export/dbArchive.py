@@ -12,6 +12,21 @@ print(workspace_path)
 ##################################################################################
 conn_runtime = sqlite3.connect(os.path.join(workspace_path, "runtime.db"))
 cursor_runtime = conn_runtime.cursor() 
+
+query = "SELECT * FROM dir_lib WHERE DIR_NAME = ?"
+cursor_runtime.execute(query, ("PROCESSED_ARCHIVE",))
+
+target_row = cursor_runtime.fetchone()
+if target_row:
+    headers = [description[0] for description in cursor_runtime.description]
+    target_data = dict(zip(headers, target_row))
+    target_path = target_data["DIR_PATH"]
+    print(f"PROCESSED_ARCHIVE: {target_path}")
+else:
+    target_path = None
+    print("PROCESSED_ARCHIVE not found in dir_lib")
+
+##################################################################################
 query_runtime = "SELECT * FROM site_info"
 cursor_runtime.execute(query_runtime)
 site_info = cursor_runtime.fetchone()
@@ -23,16 +38,17 @@ locationId = siteInfoDict['NAME']
 conn_runtime.close()
 print("Location ID:", locationId)
 ##################################################################################
-dataStorage_dirPath = r"C:\Users\Kjslo\Documents\data\DLL_Preprocessed"
-dirs = get_directories(dataStorage_dirPath)
+archiveProcessedData_path = target_path
+##################################################################################
+dirs = get_directories(archiveProcessedData_path)
 database_list = ["runtime", "usda_nass_cdl", "tempGeo"]
 if locationId not  in dirs:
     # Create a new directory in the data storage directory witht the locationId
-    os.makedirs(os.path.join(dataStorage_dirPath, locationId))
+    os.makedirs(os.path.join(archiveProcessedData_path, locationId))
     print(f"Created directory for site: {locationId}")
 else:
     print(f"Directory for site {locationId} exists.")
-    shutle_path = os.path.join(dataStorage_dirPath, locationId)
+    shutle_path = os.path.join(archiveProcessedData_path, locationId)
     files = get_files(shutle_path)
 
     tablesToKeep = ["dir_lib"]

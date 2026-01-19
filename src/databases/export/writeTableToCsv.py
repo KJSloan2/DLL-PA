@@ -8,17 +8,33 @@ import sqlite3
 conn = sqlite3.connect("runtime.db")
 cursor = conn.cursor()
 
+query = "SELECT * FROM dir_lib WHERE DIR_NAME = ?"
+cursor.execute(query, ("FRONTEND_BASE",))
+
+frontendBase_row = cursor.fetchone()
+if frontendBase_row:
+    headers = [description[0] for description in cursor.description]
+    frontendBase_data = dict(zip(headers, frontendBase_row))
+    frontendBase_path = frontendBase_data["DIR_PATH"]
+    print(f"FRONTEND_BASE: {frontendBase_path}")
+else:
+    frontendBase_path = None
+    print("FRONTEND_BASE not found in dir_lib")
+##################################################################################
 query = "SELECT * FROM site_info"
 cursor.execute(query)
+
 siteInfo = cursor.fetchone()
 headers = [description[0] for description in cursor.description]
 siteInfo = dict(zip(headers, siteInfo))
 locationId = siteInfo['NAME']
 print(locationId)
 ##################################################################################
+
 # Prest parameters for DB and Table to export
+
 shutleMapping = {
-    "dll_public_terrain":"C:\\Users\\Kjslo\\Documents\\local_dev\\dynamic_lands_lab\\frontend\\public\\terrain"
+    "dll_public_terrain":os.path.join(frontendBase_path,"frontend", "public", "terrain")
 }
 
 dbExportMapping = [
