@@ -4,6 +4,26 @@ import fiona
 import math
 from shapely.geometry import MultiLineString, Polygon, Point, mapping
 ######################################################################################
+def hex_to_rgb(hex_color, scale255=False):
+    """
+    Convert hex color to RGB tuple.
+    
+    Args:
+        hex_color: Hex color string (e.g., '#FF5733' or 'FF5733')
+        scale255: If True, return 0-255 range; if False, return 0-1 range for matplotlib
+    
+    Returns:
+        tuple: RGB values as (r, g, b)
+    """
+    if hex_color is None:
+        return (0, 0, 0)  # Black for unknown values
+    hex_color = hex_color.lstrip('#')
+    
+    if scale255:
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    else:
+        return tuple(int(hex_color[i:i+2], 16)/255.0 for i in (0, 2, 4))
+######################################################################################
 def calc_yoy_change(data):
 	storePrctDeltas = []
 	storeDelta = []
@@ -38,6 +58,21 @@ def check_vals(vals):
 			val = 0
 		returnVals.append(val)
 	return returnVals
+######################################################################################
+def fill_nulls(value, replacement):
+	"""
+	Return the value if it's not None or empty string, otherwise return default.
+	
+	Args:
+		value: The value to check
+		default: The replacement value (default is 0)
+	
+	Returns:
+		The original value or the default replacement
+	"""
+	if value is None or value == "":
+		return replacement
+	return value
 ######################################################################################
 def calc_slope(y_values):
 	n = len(y_values)
@@ -164,44 +199,103 @@ def get_directories(path):
 		print(f"Error: {e}")
 		return []
 ######################################################################################
-def get_project_paths():
+def get_workspace_paths():
 	script_dir = os.path.dirname(os.path.abspath(__file__))
-	split_dir = str(script_dir).split("/")
+	split_dir = str(script_dir).split("\\")
+	workspace_folder = split_dir[(split_dir.index("src"))-1]
 	parent_dir = os.path.abspath(os.path.join(script_dir, "..", ".."))
 	root_dir = os.path.abspath(os.path.join(parent_dir, "..",))
+
+	workspace_dir = os.path.join(parent_dir, workspace_folder)
 	return {
 		"script": script_dir,
 		"parent": parent_dir,
+		"workspace": workspace_dir,
 		"root": root_dir
 	}
 ######################################################################################
 def to_py_type(val):
-    """Convert NumPy types to native Python types for SQLite"""
-    if isinstance(val, (np.integer, np.int64, np.int32)):
-        return int(val)
-    elif isinstance(val, (np.floating, np.float64, np.float32)):
-        if np.isnan(val):
-            return None  # Store NaN as NULL in SQLite
-        return float(val)
-    elif isinstance(val, np.ndarray):
-        return val.item()  # Extract scalar from 0-d array
-    return val
+	"""Convert NumPy types to native Python types for SQLite"""
+	if isinstance(val, (np.integer, np.int64, np.int32)):
+		return int(val)
+	elif isinstance(val, (np.floating, np.float64, np.float32)):
+		if np.isnan(val):
+			return None  # Store NaN as NULL in SQLite
+		return float(val)
+	elif isinstance(val, np.ndarray):
+		return val.item()  # Extract scalar from 0-d array
+	return val
 ######################################################################################
 def safe_round(value, decimals=1):
-    """Safely round a value, returning None if value is None"""
-    return round(value, decimals) if value is not None else None
+	"""Safely round a value, returning None if value is None"""
+	return round(value, decimals) if value is not None else None
 ######################################################################################
 def polygon_filter(lon, lat, polygon):
-    """Check if a point falls within a polygon
-    
-    Args:
-        lon: Longitude of the point
-        lat: Latitude of the point
-        polygon: A Shapely Polygon object
-        
-    Returns:
-        bool: True if point is within polygon, False otherwise
+	"""Check if a point falls within a polygon
+	
+	Args:
+		lon: Longitude of the point
+		lat: Latitude of the point
+		polygon: A Shapely Polygon object
+		
+	Returns:
+		bool: True if point is within polygon, False otherwise
+	"""
+	point = Point(lon, lat)
+	return polygon.contains(point)
+######################################################################################
+def haversine(pt1, pt2):
+	# Radius of the Earth in meters
+	R = 6371000
+	# Convert latitude and longitude from degrees to radians
+	lat1, lon1 = pt1[1], pt1[0]
+	lat2, lon2 = pt2[1], pt2[0]
+	phi1 = math.radians(lat1)
+	phi2 = math.radians(lat2)
+	delta_phi = math.radians(lat2 - lat1)
+	delta_lambda = math.radians(lon2 - lon1)
+	# Haversine formula
+	a = math.sin(delta_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
+	c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+	# Distance in meters
+	dist_m = R * c
+	# Convert meters to feet
+	coef_ft = 3.28084
+	dist_ft = dist_m * coef_ft
+	# Convert feet to miles
+	dist_ml = round(dist_ft / 5280, 2)
+	return {"ft": dist_ft, "m": dist_m, "ml": dist_ml}
+######################################################################################
+def normalize_linear1(d):
+	"""
+	Normalize a list of numbers to a 0-1 scale.
+	Args:
+		d (list of float): The list of numbers to normalize.
+	"""
+	min_d = min(d)
+	max_d = max(d)
+	range_d = max_d - min_d
+	if range_d == 0:
+		return [0 for _ in d]
+	normalized = [(val - min_d) / range_d for val in d]
+	return normalized
+######################################################################################
+def normalize_symmetric(d):
     """
-    point = Point(lon, lat)
-    return polygon.contains(point)
+    Normalize a list of signed values to [-1, 1] by max absolute value.
+    """
+    max_abs = max(abs(val) for val in d if not np.isnan(val))
+    if max_abs == 0:
+        return [0 for _ in d]
+    return [(val / max_abs) if not np.isnan(val) else np.nan for val in d]
+######################################################################################
+def moore_neighborhood_idxs(row_idx, col_idx, nd=1):
+	# Generate the Moore neighborhood (8 surrounding cells)
+	neighbors = []
+	for dr in range(-nd, nd+1):
+		for dc in range(-nd, nd+1):
+			if dr == 0 and dc == 0:
+				continue  # Skip the center cell
+			neighbors.append((row_idx + dr, col_idx + dc))
+	return neighbors
 ######################################################################################
