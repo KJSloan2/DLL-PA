@@ -16,7 +16,7 @@ from shapely.geometry.base import BaseGeometry'''
 APPLY_SPATIAL_FILTER = False
 ######################################################################################
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from utils import (
+from global_functions.utils import (
 	safe_round,
 	normalize_linear1,
 	normalize_symmetric
@@ -63,12 +63,13 @@ cols = max_col - min_col + 1
 elv_array = np.full((rows, cols), np.nan)
 lat_array = np.full((rows, cols), np.nan)
 lon_array = np.full((rows, cols), np.nan)
+geoid_array = np.full((rows, cols), None)
 
 # Get column indices
 idx_row_pos = tempGeo_keys.index('idx_row')
 idx_col_pos = tempGeo_keys.index('idx_col')
 elv_pos = tempGeo_keys.index('elv_rel')
-
+geoid_pos =  tempGeo_keys.index('geoid')
 lat_pos = tempGeo_keys.index('lat')
 lon_pos = tempGeo_keys.index('lon')
 
@@ -78,6 +79,7 @@ for row in tempGeo_rows:
 	elv_array[row_idx, col_idx] = row[elv_pos]
 	lat_array[row_idx, col_idx] = row[lat_pos]
 	lon_array[row_idx, col_idx] = row[lon_pos]
+	geoid_array[row_idx, col_idx] = row[geoid_pos]
 
 def get_moore_neighborhood_vals(d_array, row_idx, col_idx):
 	offsets = [
@@ -140,182 +142,166 @@ def get_neighbor(row_idx, col_idx, direction, refDict):
 		return elv_array[neighbor_row, neighbor_col]
 	return None
 
-with open(os.path.join(
-	parent_dir, 'output', 
-	f'ct_elvDeltaSignals_{locationKey}.csv'), 
-	'w', newline='') as csv_output_file:
-	
-	fieldnames = [
-		"idx_row",
-		"idx_col",
-		"mnc_elv",
-		"mnc_lat",
-		"mnc_lon",
-		"terrain_classification",
-		"anisotropy",
-		"Cgap",
-		"downhill_fraction",
-		"Cgap_uphill",
-		"uphill_fraction",
-		"dom_angle_deg",
-		"dom_dir",
-		"dom_ptb_lat",
-		"dom_ptb_lon",
-		"dom_dir_elv"
-	]
+updates_batch = []
 
-	writer = csv.DictWriter(csv_output_file, fieldnames=fieldnames)
-	writer.writeheader()
-
-	for i in range(1, rows-1):
-		for j in range(1, cols-1):
-			center_elv = elv_array[i, j]
-			if np.isnan(center_elv):
-				continue
-			
-			center_lat = lat_array[i, j]
-			center_lon = lon_array[i, j]
-
-			moore_elvs = get_moore_neighborhood_vals(elv_array, i, j)
-			moore_lat = get_moore_neighborhood_vals(lat_array, i, j)
-			moore_lon = get_moore_neighborhood_vals(lon_array, i, j)
-
-			# Calculate elevation differences
-			elv_diffs_raw = [
-				(neighbor - center_elv) if not np.isnan(neighbor) else np.nan
-				for neighbor in moore_elvs
-			]
-			
-			neighbor_distances = [
-				math.sqrt(2),  # NW
-				1.0,           # N
-				math.sqrt(2),  # NE
-				1.0,           # W
-				1.0,           # E
-				math.sqrt(2),  # SW
-				1.0,           # S
-				math.sqrt(2)   # SE
-			]
-			
-			gradients_signed = [
-				(dz / d) if not np.isnan(dz) else np.nan
-				for dz, d in zip(elv_diffs_raw, neighbor_distances)
-			]
-
-			g_signed = gradients_signed.copy()
-
-			g_signed_norm = normalize_symmetric(g_signed)
-
-			# Unsigned magnitude signal (for anisotropy)
-			g_abs = [abs(g) if not np.isnan(g) else np.nan for g in gradients_signed]	
-
-			g_abs_norm = normalize_linear1(g_abs)
-
-			downhill = [g for g in g_signed if g < 0]
-			uphill   = [g for g in g_signed if g > 0]
-
-			if len(downhill) >= 2:
-				#downhill_sorted = sorted(abs(g) for g in downhill)
-				downhill_sorted = sorted([abs(g) for g in downhill], reverse=True)
-				Cgap = downhill_sorted[0] - downhill_sorted[1]
-				downhill_fraction = len(downhill) / 8
-			else:
-				Cgap = None
-				downhill_fraction = None
-
-			if len(uphill) >= 2:
-				#uphill_sorted = sorted(abs(g) for g in uphill)
-				uphill_sorted = sorted([abs(g) for g in uphill], reverse=True)
-				Cgap_uphill = uphill_sorted[0] - uphill_sorted[1]
-				uphill_fraction = len(uphill) / 8
-			else:
-				Cgap_uphill = None
-				uphill_fraction = None
-			
-			weights = g_abs_norm
+for i in range(1, rows-1):
+	for j in range(1, cols-1):
+		center_elv = elv_array[i, j]
+		if np.isnan(center_elv):
+			continue
 		
-			Rx = sum(w * cos_i for w, cos_i in zip(weights, cos_components))
-			Ry = sum(w * sin_i for w, sin_i in zip(weights, sin_components))
+		center_lat = lat_array[i, j]
+		center_lon = lon_array[i, j]
 
-			anisotropy = math.sqrt(Rx**2 + Ry**2) / (sum(weights) + 1e-9)
-			
-			terrainClassification = None
-			if anisotropy > 0:
-				dominant_angle = math.atan2(Ry, Rx)
-				dominant_angle_deg = math.degrees(dominant_angle)
-				bearing = (90 - dominant_angle_deg) % 360
+		moore_elvs = get_moore_neighborhood_vals(elv_array, i, j)
+		moore_lat = get_moore_neighborhood_vals(lat_array, i, j)
+		moore_lon = get_moore_neighborhood_vals(lon_array, i, j)
+		#moore_geoids = get_moore_neighborhood_vals(geoid_array, i, j)
+		geoid = geoid_array[i, j]
+
+		# Calculate elevation differences
+		elv_diffs_raw = [
+			(neighbor - center_elv) if not np.isnan(neighbor) else np.nan
+			for neighbor in moore_elvs
+		]
+		
+		neighbor_distances = [
+			math.sqrt(2),  # NW
+			1.0,           # N
+			math.sqrt(2),  # NE
+			1.0,           # W
+			1.0,           # E
+			math.sqrt(2),  # SW
+			1.0,           # S
+			math.sqrt(2)   # SE
+		]
+		
+		gradients_signed = [
+			(dz / d) if not np.isnan(dz) else np.nan
+			for dz, d in zip(elv_diffs_raw, neighbor_distances)
+		]
+
+		g_signed = gradients_signed.copy()
+
+		g_signed_norm = normalize_symmetric(g_signed)
+
+		# Unsigned magnitude signal (for anisotropy)
+		g_abs = [abs(g) if not np.isnan(g) else np.nan for g in gradients_signed]	
+
+		g_abs_norm = normalize_linear1(g_abs)
+
+		downhill = [g for g in g_signed if g < 0]
+		uphill   = [g for g in g_signed if g > 0]
+
+		if len(downhill) >= 2:
+			#downhill_sorted = sorted(abs(g) for g in downhill)
+			downhill_sorted = sorted([abs(g) for g in downhill], reverse=True)
+			Cgap = downhill_sorted[0] - downhill_sorted[1]
+			downhill_fraction = len(downhill) / 8
+		else:
+			Cgap = None
+			downhill_fraction = None
+
+		if len(uphill) >= 2:
+			#uphill_sorted = sorted(abs(g) for g in uphill)
+			uphill_sorted = sorted([abs(g) for g in uphill], reverse=True)
+			Cgap_uphill = uphill_sorted[0] - uphill_sorted[1]
+			uphill_fraction = len(uphill) / 8
+		else:
+			Cgap_uphill = None
+			uphill_fraction = None
+		
+		weights = g_abs_norm
+	
+		Rx = sum(w * cos_i for w, cos_i in zip(weights, cos_components))
+		Ry = sum(w * sin_i for w, sin_i in zip(weights, sin_components))
+
+		anisotropy = math.sqrt(Rx**2 + Ry**2) / (sum(weights) + 1e-9)
+		
+		terrainClassification = None
+		if anisotropy > 0:
+			dominant_angle = math.atan2(Ry, Rx)
+			dominant_angle_deg = math.degrees(dominant_angle)
+			bearing = (90 - dominant_angle_deg) % 360
+		else:
+			dominant_angle = None
+			dominant_angle_deg = None
+			bearing = None
+
+		if bearing is not None:
+			store_diffs = []
+			for key, item in moore_ref.items():
+				moore_labels.append(key)
+				angle = item["angle"]
+				store_diffs.append(abs(bearing - angle))
+			min_diff = min(store_diffs)
+			idx_dominant = store_diffs.index(min_diff)
+			dominant_direction = moore_labels[idx_dominant]
+			offset = moore_ref[dominant_direction]["offset"]
+			dominant_ptb_lat = moore_lat[idx_dominant]
+			dominant_ptb_lon = moore_lon[idx_dominant]
+			dom_dir_elv = moore_elvs[idx_dominant]
+		else:
+			dominant_direction = None
+			dominant_ptb_lat = None
+			dominant_ptb_lon = None
+			dom_dir_elv = None
+		
+		terrainClassification = None
+		anisotropy_flag = None
+		downhill_flag = None
+		CGap_flag = None
+
+		if anisotropy is not None:
+			if anisotropy <= 0.35:
+				anisotropy_flag = True
 			else:
-				dominant_angle = None
-				dominant_angle_deg = None
-				bearing = None
-
-			if bearing is not None:
-				store_diffs = []
-				for key, item in moore_ref.items():
-					moore_labels.append(key)
-					angle = item["angle"]
-					store_diffs.append(abs(bearing - angle))
-				min_diff = min(store_diffs)
-				idx_dominant = store_diffs.index(min_diff)
-				dominant_direction = moore_labels[idx_dominant]
-				offset = moore_ref[dominant_direction]["offset"]
-				dominant_ptb_lat = moore_lat[idx_dominant]
-				dominant_ptb_lon = moore_lon[idx_dominant]
-				dom_dir_elv = moore_elvs[idx_dominant]
+				anisotropy_flag = False
+		if downhill_fraction is not None:
+			if downhill_fraction >= 0.5:
+				downhill_flag = True
 			else:
-				dominant_direction = None
-				dominant_ptb_lat = None
-				dominant_ptb_lon = None
-				dom_dir_elv = None
+				downhill_flag = False
+		if Cgap is not None:
+			if Cgap <= 2:
+				CGap_flag = True
+			else:
+				CGap_flag = False
 
-			'''if anisotropy > 0.5:
-				terrainClassification = "directional"
-			elif anisotropy <= 0.5:
-				terrainClassification = "isotropic"'''
-			
-			
-			terrainClassification = None
-			anisotropy_flag = None
-			downhill_flag = None
-			CGap_flag = None
+		if anisotropy_flag == True and downhill_flag == True:
+			terrainClassification = "DSS"
 
-			if anisotropy is not None:
-				if anisotropy <= 0.35:
-					anisotropy_flag = True
-				else:
-					anisotropy_flag = False
-			if downhill_fraction is not None:
-				if downhill_fraction >= 0.5:
-					downhill_flag = True
-				else:
-					downhill_flag = False
-			if Cgap is not None:
-				if Cgap <= 2:
-					CGap_flag = True
-				else:
-					CGap_flag = False
+		updates_batch.append((
+			terrainClassification,
+			safe_round(anisotropy, 3),
+			safe_round(Cgap, 3) if Cgap is not None else None,
+			safe_round(downhill_fraction, 3) if downhill_fraction is not None else None,
+			safe_round(Cgap_uphill, 3) if Cgap_uphill is not None else None,
+			safe_round(uphill_fraction, 3) if uphill_fraction is not None else None,
+			safe_round(dominant_angle_deg , 3) if dominant_angle_deg is not None else None,
+			dominant_direction,
+			dominant_ptb_lat,
+			dominant_ptb_lon,
+			dom_dir_elv,
+			geoid
+		))
+	
+cursor_tempGeo.executemany(
+    """UPDATE terrain_composite
+    SET terrain_classification = ?,
+		anisotropy = ?,
+		cgap = ?,
+		downhill_fraction = ?,
+		cgap_uphill = ?,
+		uphill_fraction = ?,
+		dom_angle_deg = ?,
+		dom_dir = ?,
+		dom_ptb_lat = ?,
+		dom_ptb_lon = ?,
+		dom_dir_elv = ?
+    WHERE geoid = ?""",
+    updates_batch
+)
 
-			if anisotropy_flag == True and downhill_flag == True:
-				terrainClassification = "DSS"
-
-
-			writer.writerow({
-					"idx_row": i,
-					"idx_col": j,
-					"mnc_elv": center_elv,
-					"mnc_lat": center_lat,
-					"mnc_lon": center_lon,
-					"terrain_classification": terrainClassification,
-					"anisotropy": safe_round(anisotropy, 3),
-					"Cgap": safe_round(Cgap, 3) if Cgap is not None else None,
-					"downhill_fraction": safe_round(downhill_fraction, 3) if downhill_fraction is not None else None,
-					"Cgap_uphill": safe_round(Cgap_uphill, 3) if Cgap_uphill is not None else None,
-					"uphill_fraction": safe_round(uphill_fraction, 3) if uphill_fraction is not None else None,
-					"dom_angle_deg": safe_round(dominant_angle_deg , 3) if dominant_angle_deg is not None else None,
-					"dom_dir": dominant_direction,
-					"dom_ptb_lat": dominant_ptb_lat,
-					"dom_ptb_lon": dominant_ptb_lon,
-					"dom_dir_elv": dom_dir_elv
-				})
-
+conn_tempGeo.commit()
 print("Done")
