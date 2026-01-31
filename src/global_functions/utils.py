@@ -2,6 +2,10 @@ import os
 import numpy as np
 import fiona
 import math
+from types import NoneType
+from typing import Tuple
+from pathlib import Path
+import re
 from shapely.geometry import MultiLineString, Polygon, Point, mapping
 ######################################################################################
 def hex_to_rgb(hex_color, scale255=False):
@@ -298,4 +302,75 @@ def moore_neighborhood_idxs(row_idx, col_idx, nd=1):
 				continue  # Skip the center cell
 			neighbors.append((row_idx + dr, col_idx + dc))
 	return neighbors
+################################################################################
+def ensure_folder(directory: str, folder_name: str):
+    folder_path = Path(directory) / folder_name
+    folder_path.mkdir(parents=True, exist_ok=True)
+    print(f"Ensured folder exists: {folder_path}")
+    return folder_path
+######################################################################################
+def is_valid_wgs84(coord_str: str) -> Tuple[bool, str]:
+    """
+    Check if a string is a valid WGS84 coordinate pair (latitude, longitude).
+    Args:
+        coord_str (str): A string like "40.7128, -74.0060"
+    Returns:
+        (bool, str): (True, "") if valid; (False, error_message) if not.
+    """
+    # Match "lat, lon" with optional spaces, decimals, and special characters
+    pattern = r'^\s*([-+]?\d+(\.\d+)?)\s*,\s*([-+]?\d+(\.\d+)?)\s*$'
+    match = re.match(pattern, coord_str)
+    if not match:
+        #"NOT VALID WGS 84 FORMAT"
+        return False
+    try:
+        lat = float(match.group(1))
+        lon = float(match.group(3))
+    except ValueError:
+        # "Values could not be converted to floats."
+        return False
+
+    if not (-90 <= lat <= 90):
+        #f"Latitude {lat} is out of range (-90 to 90)."
+        return False
+    if not (-180 <= lon <= 180):
+        # f"Longitude {lon} is out of range (-180 to 180)."
+        return False
+    return True
+######################################################################################
+######################################################################################
+def prep_coords(coords):
+    """
+    Parse coordinate string into (lat, lon) tuple.
+    
+    Args:
+        coords: String in format "lat, lon" or "(lat, lon)"
+        
+    Returns:
+        Tuple of (lat, lon) as floats
+    """
+    # Remove outer parentheses if present
+    coords_str = coords.strip()
+    if coords_str.startswith('(') and coords_str.endswith(')'):
+        coords_str = coords_str[1:-1]
+    
+    # Split by comma
+    parts = coords_str.split(",")
+    
+    if len(parts) != 2:
+        raise ValueError(f"Invalid coordinate format: {coords}. Expected 'lat, lon'")
+    
+    try:
+        lat = float(parts[0].strip())
+        lon = float(parts[1].strip())
+    except ValueError as e:
+        raise ValueError(f"Could not parse coordinates '{coords}': {e}")
+    
+    # Validate WGS84 ranges
+    if not (-90 <= lat <= 90):
+        raise ValueError(f"Latitude {lat} is out of valid range (-90 to 90)")
+    if not (-180 <= lon <= 180):
+        raise ValueError(f"Longitude {lon} is out of valid range (-180 to 180)")
+    
+    return (lat, lon)
 ######################################################################################
