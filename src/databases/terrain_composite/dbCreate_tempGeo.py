@@ -80,8 +80,7 @@ if args["make_composite_table"] == True:
         'dom_ptb_lat': 'FLOAT',
         'dom_ptb_lon': 'FLOAT',
         'dom_dir_elv': 'FLOAT',
-        'dd_pt_cidx': 'INTEGER',
-        'dd_pt_ridx': 'INTEGER',
+        'dd_geoid': 'INTEGER',
         }, DROP)
 
 if args["make_spectral_table"] == True:
