@@ -14,7 +14,6 @@ args = {
 
 conn = sqlite3.connect('tempGeo.db')
 
-
 if args["make_osm_srf_table"] == True:
     #"railway", "waterway", "aeroway", "powerline", "pipeline"
     osmFeatureTags = ["highway_srf", "building_srf", "construction_srf"]
@@ -80,9 +79,11 @@ if args["make_composite_table"] == True:
         'dom_dir': 'FLOAT',
         'dom_ptb_lat': 'FLOAT',
         'dom_ptb_lon': 'FLOAT',
-        'dom_dir_elv': 'FLOAT'
+        'dom_dir_elv': 'FLOAT',
+        'dd_pt_cidx': 'INTEGER',
+        'dd_pt_ridx': 'INTEGER',
         }, DROP)
-    
+
 if args["make_spectral_table"] == True:
     # Create table for 3Dep + LS8 composite data
     create_table(conn, 'spectral_temporal', {
