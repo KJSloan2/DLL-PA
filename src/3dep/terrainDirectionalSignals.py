@@ -286,11 +286,11 @@ for i in range(1, rows-1):
 
 		# Get the indexes of the dominant point based on direction
 		try:
-			dd_pt_cidx = j + DOM_DIR_IDX[dominant_direction][1]
-			dd_pt_ridx = i + DOM_DIR_IDX[dominant_direction][0]
+			cidx = j + DOM_DIR_IDX[dominant_direction][1]
+			ridx = i + DOM_DIR_IDX[dominant_direction][0]
+			dd_geoid = geoid_array[ridx, cidx]
 		except:
-			dd_pt_cidx = None
-			dd_pt_ridx = None
+			dd_geoid = None
 
 		updates_batch.append((
 			terrainClassification,
@@ -304,8 +304,7 @@ for i in range(1, rows-1):
 			dominant_ptb_lat,
 			dominant_ptb_lon,
 			dom_dir_elv,
-			dd_pt_cidx,
-			dd_pt_ridx,
+			dd_geoid,
 			geoid
 		))
 	
@@ -322,8 +321,7 @@ cursor_tempGeo.executemany(
 		dom_ptb_lat = ?,
 		dom_ptb_lon = ?,
 		dom_dir_elv = ?,
-		dd_pt_cidx = ?,
-		dd_pt_ridx = ?
+		dd_geoid = ?
     WHERE geoid = ?""",
     updates_batch
 )
