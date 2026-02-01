@@ -125,6 +125,28 @@ for key, item in moore_ref.items():
 	cos_components.append(cos)
 	sin_components.append(sin)
 
+DOM_DIR_IDX = {
+    "NW": (-1, 1),
+    "N": (0, 1),
+    "NE": (1, 1),
+    "W": (-1, 0),
+    "E": (1, 0),
+    "SW": (-1, -1),
+    "S": (0, -1),
+    "SE": (1, -1)
+}
+
+NEIGHBOR_DISTS = [
+	math.sqrt(2),  # NW
+	1.0,           # N
+	math.sqrt(2),  # NE
+	1.0,           # W
+	1.0,           # E
+	math.sqrt(2),  # SW
+	1.0,           # S
+	math.sqrt(2)   # SE
+]
+
 elvDelta_signals = {
 	"idx_row": [],
 	"idx_col": [],
@@ -165,20 +187,10 @@ for i in range(1, rows-1):
 			for neighbor in moore_elvs
 		]
 		
-		neighbor_distances = [
-			math.sqrt(2),  # NW
-			1.0,           # N
-			math.sqrt(2),  # NE
-			1.0,           # W
-			1.0,           # E
-			math.sqrt(2),  # SW
-			1.0,           # S
-			math.sqrt(2)   # SE
-		]
 		
 		gradients_signed = [
 			(dz / d) if not np.isnan(dz) else np.nan
-			for dz, d in zip(elv_diffs_raw, neighbor_distances)
+			for dz, d in zip(elv_diffs_raw, NEIGHBOR_DISTS)
 		]
 
 		g_signed = gradients_signed.copy()
@@ -237,6 +249,7 @@ for i in range(1, rows-1):
 			min_diff = min(store_diffs)
 			idx_dominant = store_diffs.index(min_diff)
 			dominant_direction = moore_labels[idx_dominant]
+			#print("dominant_direction: ", dominant_direction)
 			offset = moore_ref[dominant_direction]["offset"]
 			dominant_ptb_lat = moore_lat[idx_dominant]
 			dominant_ptb_lon = moore_lon[idx_dominant]
@@ -271,6 +284,14 @@ for i in range(1, rows-1):
 		if anisotropy_flag == True and downhill_flag == True:
 			terrainClassification = "DSS"
 
+		# Get the indexes of the dominant point based on direction
+		try:
+			dd_pt_cidx = j + DOM_DIR_IDX[dominant_direction][1]
+			dd_pt_ridx = i + DOM_DIR_IDX[dominant_direction][0]
+		except:
+			dd_pt_cidx = None
+			dd_pt_ridx = None
+
 		updates_batch.append((
 			terrainClassification,
 			safe_round(anisotropy, 3),
@@ -283,6 +304,8 @@ for i in range(1, rows-1):
 			dominant_ptb_lat,
 			dominant_ptb_lon,
 			dom_dir_elv,
+			dd_pt_cidx,
+			dd_pt_ridx,
 			geoid
 		))
 	
@@ -298,7 +321,9 @@ cursor_tempGeo.executemany(
 		dom_dir = ?,
 		dom_ptb_lat = ?,
 		dom_ptb_lon = ?,
-		dom_dir_elv = ?
+		dom_dir_elv = ?,
+		dd_pt_cidx = ?,
+		dd_pt_ridx = ?
     WHERE geoid = ?""",
     updates_batch
 )
