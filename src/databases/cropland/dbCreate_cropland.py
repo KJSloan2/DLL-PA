@@ -1,4 +1,5 @@
 import duckdb
+######################################################################################
 DROP = True
 def create_table(table_name, columns):
     cursor = conn.cursor()
@@ -12,6 +13,15 @@ def create_table(table_name, columns):
     print(table_name)
 
 conn = duckdb.connect('usda_nass_cdl.duckdb')
+
+create_table('land_cover_classification_ref', {
+    'VAL': 'INTEGER PRIMARY KEY',
+    'HEX_COLOR': 'VARCHAR',
+    'R': 'INTEGER',
+    'G': 'INTEGER',
+    'B': 'INTEGER',
+    'LAND_COVER': 'VARCHAR'
+     })
 
 create_table('cdl_data', {
     'raster_id': 'VARCHAR PRIMARY KEY',
