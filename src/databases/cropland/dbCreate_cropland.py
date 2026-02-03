@@ -1,5 +1,4 @@
-import os
-import sqlite3
+import duckdb
 DROP = True
 def create_table(table_name, columns):
     cursor = conn.cursor()
@@ -12,23 +11,14 @@ def create_table(table_name, columns):
     conn.commit()
     print(table_name)
 
-conn = sqlite3.connect('usda_nass_cdl.db')
-
-'''create_table('land_cover_classification_ref', {
-    'VAL': 'INTEGER PRIMARY KEY',
-    'HEX_COLOR': 'TEXT',
-    'R': 'INTEGER',
-    'G': 'INTEGER',
-    'B': 'INTEGER',
-    'LAND_COVER': 'TEXT'
-     })'''
+conn = duckdb.connect('usda_nass_cdl.duckdb')
 
 create_table('cdl_data', {
-    'raster_id': 'TEXT PRIMARY KEY',
+    'raster_id': 'VARCHAR PRIMARY KEY',
     'lc_val': 'INTEGER',
-    "lat": 'REAL',
-    "lon": 'REAL',
-    'lc_label': 'TEXT'
+    "lat": 'DOUBLE',
+    "lon": 'DOUBLE',
+    'lc_label': 'VARCHAR'
      })
 
 conn.close()
