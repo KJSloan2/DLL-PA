@@ -6,6 +6,7 @@ import sys
 import csv
 import json
 import sqlite3
+import duckdb
 
 import pandas as pd
 import numpy as np
@@ -20,9 +21,9 @@ from shapely.geometry.base import BaseGeometry'''
 APPLY_SPATIAL_FILTER = False
 ######################################################################################
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from utils import safe_round, polygon_filter, fill_nulls
+from global_functions.utils import safe_round, polygon_filter, fill_nulls
 from spatial_utils import pt_in_geom, nearby_feature
-from multispecTools import classify_land_cover
+from global_functions.multispecFunctions import classify_land_cover
 ######################################################################################
 def list_files(directory):
 	return [f for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f))]
@@ -35,7 +36,7 @@ if APPLY_SPATIAL_FILTER:
 	filterPolygonCoords = filterPolygonJson["features"][0]["geometry"]["coordinates"]
 	filterPolygon = shapely.geometry.shape(filterPolygonJson["features"][0]["geometry"])
 ######################################################################################
-conn = sqlite3.connect('tempGeo.db')
+conn = duckdb.connect('tempGeo.duckdb')
 cursor = conn.cursor()
 
 #cursor.execute(f"DELETE FROM spectral_temporal")
@@ -520,7 +521,7 @@ for idx, dfRow in df_compositeTerrain.iterrows():
 			ndvi_temporal_str,
 			ndmi_temporal_str,
 			lsLandCover,
-			None,  # cl_land_cover - added missing value
+			None,
 			)
 		)
 	
