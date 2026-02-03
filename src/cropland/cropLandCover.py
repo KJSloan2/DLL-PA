@@ -2,18 +2,15 @@ import os
 import sys
 import math
 import sqlite3
+import duckdb
 import matplotlib.pyplot as plt
 import numpy as np
 from rasterio.windows import from_bounds
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 VIZUALIZE = True
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
-#query = f"SELECT * FROM land_cover_classification_ref"
-#cursor.execute(query)
-#rows = cursor.fetchall()
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from raster_utils import (
+from global_functions.rasterFunctions import (
     read_tiff,
     get_tiff_dimensions, 
     get_tiff_bounds,
@@ -40,14 +37,7 @@ print("aoi_bb_pt_ne: ", aoi_bb_pt_ne)
 print("aoi_centroid: ", aoi_centroid)
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
-conn_runtime = sqlite3.connect('runtime.db')
-cursor_runtime = conn_runtime.cursor() 
-query_runtime = "SELECT * FROM site_info"
-cursor_runtime.execute(query_runtime)
-site_info = cursor_runtime.fetchone()
-print(site_info)
-
-conn = sqlite3.connect('usda_nass_cdl.db')
+conn = duckdb.connect('usda_nass_cdl.duckdb')
 cursor = conn.cursor()
 
 data_fName = "2024_30m_cdls.tif"
@@ -164,7 +154,6 @@ def get_land_cover_info(cursor, val):
     result = cursor.fetchone()
     
     if result:
-        #print(result[0], result[1], result[2], result[3])
         return result[0], result[1], result[2], result[3]   # (RGB, land_cover)
     else:
         return None, None, None, None
@@ -172,8 +161,6 @@ def get_land_cover_info(cursor, val):
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 cursor.execute("DELETE FROM cdl_data")
 conn.commit()
-
-
 
 dataToViz = {"VAL": [], "RGB": [], "LAND_COVER": []}
 rgb_array = np.zeros((band_window.shape[0], band_window.shape[1], 3))
@@ -216,11 +203,11 @@ for i, row in enumerate(band_window):
     cy += psd_lat
 conn.commit()
 
-'''for key, obj in catalog.items():
+for key, obj in catalog.items():
     lc = obj["lc"]
     count = obj["count"]
     prctTotal = (count / rasterCount) * 100
-    print(key, lc, prctTotal)'''
+    print(key, lc, prctTotal)
 
 if VIZUALIZE:
     # Visualize
@@ -241,7 +228,7 @@ if VIZUALIZE:
 
     # Optional: Show legend of unique land cover types
     unique_vals = np.unique(band_window[~np.isnan(band_window)])
-    print("\nLand Cover Types in Window:")
+    '''print("\nLand Cover Types in Window:")
     for val in unique_vals:
         r, g, b, land_cover = get_land_cover_info(cursor, int(val))
-        print(f"  {int(val)}: {land_cover} (R:{r}, G:{g}, B:{b})")
+        print(f"  {int(val)}: {land_cover} (R:{r}, G:{g}, B:{b})")'''
