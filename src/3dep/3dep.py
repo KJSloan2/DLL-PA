@@ -1,23 +1,29 @@
-import subprocess
 import os
 from os import listdir
 from os.path import isfile, join
+import subprocess
 
 import time
 import math
 import json
 
 import numpy as np
-import csv
 import rasterio as rio
 from rasterio.plot import show
-import sqlite3
+
+import duckdb
 ######################################################################################
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from utils import  json_serialize, to_py_type
+from global_functions.utils import  json_serialize, to_py_type
+from global_functions.resampleFunctions import (
+	compress_and_scale_color,
+	gaussian_kernel,
+	apply_gaussian_kernel
+)
+from global_functions.rasterFunctions import get_tiff_dimensions
 ######################################################################################
-#resampling_size: The size of the pooling window to avergae and smooth the data
+#resampling_size: The size of the pooling window to average and smooth the data
 resampling_size = 1
 geoTigffSpatialResolution = 10
 ######################################################################################
@@ -49,36 +55,6 @@ yearRange = [analysis_parameters["year_start"],analysis_parameters["year_end"]]
 analysis_version = analysis_parameters["analysis_version"]
 start_time = time.time()'''
 ######################################################################################
-def get_tiff_dimensions(file_path):
-	'''Gets the bounds and dimensions of a given geoTiff file'''
-	try:
-		with rio.open(file_path) as src:
-			width = src.width
-			height = src.height
-		return width, height
-	except Exception as e:
-		print(f"Error: {e}")
-		return None
-######################################################################################
-def geodetic_to_ecef(lat, lon, h):
-	"""Convert geodetic coordinates to ECEF.
-	Parameters: lat -- Latitude in degrees; lon -- Longitude in degrees; h -- Elevation in meters
-	Returns: x, y, z -- ECEF coordinates in meters"""
-	a = 6378137.0  # WGS-84 Earth semimajor axis (meters)
-	f = 1 / 298.257223563  # WGS-84 flattening factor
-	e2 = 2 * f - f ** 2  # Square of eccentricity
-	# Convert latitude and longitude from degrees to radians
-	lat_rad = math.radians(lat)
-	lon_rad = math.radians(lon)
-	# Calculate prime vertical radius of curvature
-	N = a / math.sqrt(1 - e2 * math.sin(lat_rad) ** 2)
-	# Calculate ECEF coordinates
-	x = (N + h) * math.cos(lat_rad) * math.cos(lon_rad)
-	y = (N + h) * math.cos(lat_rad) * math.sin(lon_rad)
-	z = (N * (1 - e2) + h) * math.sin(lat_rad)
-	return x, y, z
-######################################################################################
-######################################################################################
 #Color palette for color coding points based on elevation
 palette = [
 	[58, 226, 55], [181, 226, 46], [214, 226, 31], [255, 247, 5], [255, 214, 17], 
@@ -88,68 +64,6 @@ palette = [
 ]
 #Reverse palette order
 palette = palette[::-1]
-######################################################################################
-def compress_and_scale(value, min_value, max_value, target_min=0, target_max=len(palette)):
-	'''Performs min-max normalization to scale elevation values. Rescales normalized value
-	to a target value (lenght of color palette) and returns the normalized value and index
-	of the color to apply to the pixel'''
-	# Step 1: Min-Max Normalization (compress between 0 and 1)
-	normalized_value = (value - min_value) / (max_value - min_value)
-	# Step 2: Scale to the target range (0 to 21)
-	scaled_value = normalized_value * (target_max - target_min) + target_min
-	# Step 3: Convert to an integer
-	return [int(float(scaled_value)),normalized_value]
-######################################################################################
-def haversine_meters(pt1, pt2):
-	'''Calulates the distance between two geographoic points. Takes curvatrure of 
-	the Earth into account.'''
-	# Radius of the Earth in meters
-	R = 6371000
-	# Convert latitude and longitude from degrees to radians'
-	lat1, lon1 = pt1[1], pt1[0]
-	lat2, lon2 = pt2[1], pt2[0]
-	phi1 = math.radians(lat1)
-	phi2 = math.radians(lat2)
-	delta_phi = math.radians(lat2 - lat1)
-	delta_lambda = math.radians(lon2 - lon1)
-	# Haversine formula
-	a = math.sin(delta_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
-	c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-	coef_ft = 3.28084
-	# Distance in meters
-	dist_m = R * c
-	dist_ft = dist_m*coef_ft
-	dist_ml = round((dist_ft/5280),2)
-	return {"ft":dist_ft, "m":dist_m, "ml":dist_ml}
-######################################################################################
-def gaussian_kernel(size, sigma=1):
-	"""
-	Creates a gaussian kernal.
-	Parameters:
-		size (int): Size of the kernel (should be odd).
-		sigma (float): Standard deviation of the Gaussian distribution.
-	Returns: np.ndarray: 2D array representing the Gaussian kernel.
-	"""
-	kernel = np.fromfunction(
-		lambda x, y: (1/(2*np.pi*sigma**2)) * np.exp(-((x - size//2)**2 + (y - size//2)**2)/(2*sigma**2)),
-		(size, size)
-	)
-	return kernel / np.sum(kernel)
-######################################################################################
-def apply_gaussian_kernel(data, kernel):
-	"""Apply a Gaussian kernel over a 2D array of data using a sliding window.
-	Parameters: data (np.ndarray): 2D array of data. kernel (np.ndarray): Gaussian kernel.
-	Returns: np.ndarray: Result of applying the Gaussian kernel over the data."""
-	# Pad the data
-	padded_data = np.pad(data, pad_width=2, mode='constant')
-	# Apply the Gaussian filter using a sliding window
-	output_data = np.zeros_like(data)
-	for y in range(output_data.shape[0]):
-		for x in range(output_data.shape[1]):
-			window = padded_data[y:y+resampling_size, x:x+resampling_size]
-			output_data[y, x] = np.sum(window * kernel)
-
-	return output_data
 ######################################################################################
 elevationData = {"coordinates":[]}
 zScaler = 0.000008983152841185062
@@ -236,7 +150,7 @@ for i in range(1,src_height-(resampling_size+1),resampling_size):
 			coord_x+=step_width
 			#calculate the reletive elevation
 			elv_rel = elv-b1Elevation_min
-			elv_scaled = compress_and_scale(elv, b1Elevation_min, b1Elevation_max, target_min=0, target_max=len(palette))
+			elv_scaled = compress_and_scale_color(elv, b1Elevation_min, b1Elevation_max, palette, target_min=0)
 			
 			output.append({"lon":coord_x, "lat":coord_y, "elv_rel":elv_rel, "elv": elv, "idx_row": j, "idx_col": i})
 			pool_coords[0].append(coord_y)
@@ -263,7 +177,7 @@ class NumpyEncoder(json.JSONEncoder):
             return obj.tolist()
         return super().default(obj)
 ######################################################################################
-conn = sqlite3.connect('tempGeo.db')
+conn = duckdb.connect('tempGeo.duckdb')
 cursor = conn.cursor()
 
 cursor.execute(f"DELETE FROM three_dep")
@@ -272,11 +186,11 @@ conn.commit()
 for idx, row in enumerate(output):
 	#"lon":coord_x, "lat":coord_y, "elv_rel":elv_rel, "elv_real": elv, "idx_row": j, "idx_col": i}
 	cursor.execute(
-		f'''INSERT INTO three_dep (
-			'rowId', 'idx_row', 'idx_col',
-			'lat', 'lon',
-			'elv_rel', 'elv', 'slope'
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+		"""INSERT INTO three_dep (
+			rowId, idx_row, idx_col,
+			lat, lon,
+			elv_rel, elv, slope
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
 		(
 			idx,
    			to_py_type(output[idx]["idx_row"]), to_py_type(output[idx]["idx_col"]),
@@ -286,14 +200,6 @@ for idx, row in enumerate(output):
 
 conn.commit()
 conn.close()
-######################################################################################
-'''output_path = os.path.join(output_dir, locationKey + "_3DEP_terrain.csv")
-with open(output_path, mode="w", newline='', encoding='utf-8') as csvfile:
-    fieldnames = ["lon", "lat", "elv_rel", "elv_real", "idx_row", "idx_col"]
-    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-
-    writer.writeheader()
-    writer.writerows(output)'''
 ######################################################################################
 try:
     print("Starting 3DEP-Landsat8 composite processing...")
