@@ -5,11 +5,12 @@ import csv
 
 from scipy.stats import pearsonr
 import pandas as pd
-import sqlite3
+#import sqlite3
+import duckdb
 ######################################################################################
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from utils import get_files, to_py_type
+from global_functions.utils import get_files, to_py_type
 ######################################################################################
 script_dir = os.path.dirname(os.path.abspath(__file__))
 split_dir = str(script_dir).split("/")
@@ -21,7 +22,7 @@ locationKey = logJson["location_key"]
 ######################################################################################
 data_dir = os.path.join(parent_dir, "output", "landsat", locationKey, "arrays")
 ######################################################################################
-conn = sqlite3.connect('tempGeo.db')
+conn = duckdb.connect('tempGeo.duckdb')
 cursor = conn.cursor()
 ######################################################################################
 metricKeys = ["lstf", "ndvi", "ndmi"]
@@ -156,23 +157,6 @@ all_lstf_ndvi = [r['lstf_ndvi_corr'] for r in correlation_results.values() if no
 all_lstf_ndmi = [r['lstf_ndmi_corr'] for r in correlation_results.values() if not np.isnan(r['lstf_ndmi_corr'])]
 all_ndvi_ndmi = [r['ndvi_ndmi_corr'] for r in correlation_results.values() if not np.isnan(r['ndvi_ndmi_corr'])]
 
-'''print("\n=== Correlations with Pixel Coordinates ===")
-for (i, j), result in correlation_results.items():
-    if not np.isnan(result['lstf_ndvi_corr']):
-        pr_lstfNdvi = round((result['lstf_ndvi_corr']), 3)
-        pr_lstfNdmi = round((result['lstf_ndmi_corr']), 3)
-        pr_ndviNdmi = round((result['ndvi_ndmi_corr']), 3)
-        
-        print(
-            f"Pixel ({i},{j}): LSTF-NDVI={result['lstf_ndvi_corr']:.3f}, "
-              f"LSTF-NDMI={result['lstf_ndmi_corr']:.3f}, "
-              f"NDVI-NDMI={result['ndvi_ndmi_corr']:.3f}")'''
-        
-'''print("\n=== Overall Correlation Statistics ===")
-print(f"LSTF vs NDVI: mean={np.mean(all_lstf_ndvi):.3f}, median={np.median(all_lstf_ndvi):.3f}")
-print(f"LSTF vs NDMI: mean={np.mean(all_lstf_ndmi):.3f}, median={np.median(all_lstf_ndmi):.3f}")
-print(f"NDVI vs NDMI: mean={np.mean(all_ndvi_ndmi):.3f}, median={np.median(all_ndvi_ndmi):.3f}")'''
-
 coords_path = os.path.join(data_dir, f"geo_{locationKey}{suffix}")
 coords_arr = np.load(coords_path, allow_pickle=True)
 print("coords_arr shape: ", coords_arr.shape)
@@ -196,7 +180,8 @@ with open(
         'ndmi', 'ndmi_serc', 'ndmi_arc',
         'idx_row','idx_col',
         'lstf_ndvi_corr','lstf_ndmi_corr', 'ndvi_ndmi_corr',
-        'lstf_ndvi_pval', 'lstf_ndmi_pval', 'ndvi_ndmi_pval'
+        'lstf_ndvi_pval', 'lstf_ndmi_pval', 'ndvi_ndmi_pval',
+        'lstf_temporal', 'ndvi_temporal', 'ndmi_temporal'
     ])
     rowId = 0
     for i in range(coords_arr.shape[0]):
@@ -263,17 +248,26 @@ with open(
                 pval_lstfNdmi = round(corr_data.get('lstf_ndmi_pval', np.nan), 3)
                 pval_ndviNdmi = round(corr_data.get('ndvi_ndmi_pval', np.nan), 3)
 
+                lstf_temporal = stackArray_lstf[(i, j)].tolist()
+                ndvi_temporal = stackArray_ndvi[(i, j)].tolist()
+                ndmi_temporal = stackArray_ndmi[(i, j)].tolist()
+
+                # Convert temporal list data to strings to store in DB
+                lstf_temporal_str = ','.join(map(str, lstf_temporal))
+                ndvi_temporal_str = ','.join(map(str, ndvi_temporal))
+                ndmi_temporal_str = ','.join(map(str, ndmi_temporal))
 
                 cursor.execute(
-                    f'''INSERT INTO spectral_temporal (
-                    'geoid', 'lat', 'lon', 
-                    'lstf', 'lstf_serc',  'lstf_arc',
-                    'ndvi',  'ndvi_serc',  'ndvi_arc', 
-                    'ndmi', 'ndmi_serc', 'ndmi_arc' ,
-                    'idx_row', 'idx_col',
-                    'lstf_ndvi_corr', 'lstf_ndmi_corr',  'ndvi_ndmi_corr',
-                    'lstf_ndvi_pval',  'lstf_ndmi_pval', 'ndvi_ndmi_pval'
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                    """INSERT INTO spectral_temporal (
+                    geoid, lat, lon, 
+                    lstf, lstf_serc, lstf_arc,
+                    ndvi, ndvi_serc, ndvi_arc, 
+                    ndmi, ndmi_serc, ndmi_arc,
+                    idx_row, idx_col,
+                    lstf_ndvi_corr, lstf_ndmi_corr, ndvi_ndmi_corr,
+                    lstf_ndvi_pval, lstf_ndmi_pval, ndvi_ndmi_pval,
+                    lstf_temporal, ndvi_temporal, ndmi_temporal
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (   rowId,
                         lat, lon, 
                         to_py_type(round((lstf),2)), 
@@ -282,7 +276,8 @@ with open(
                         to_py_type(round((ndmi),2)), to_py_type(round((ndmi_serc),2)), to_py_type(round((ndmi_arc),2)),
                         i, j,
                         to_py_type(prc_lstfNdvi), to_py_type(prc_lstfNdmi), to_py_type(prc_ndviNdmi),
-                        to_py_type(pval_lstfNdvi), to_py_type(pval_lstfNdmi), to_py_type(pval_ndviNdmi)
+                        to_py_type(pval_lstfNdvi), to_py_type(pval_lstfNdmi), to_py_type(pval_ndviNdmi),
+                        lstf_temporal_str, ndvi_temporal_str, ndmi_temporal_str
                     ))
                 rowId+=1
                 
@@ -293,7 +288,8 @@ with open(
                     round((ndvi),2), round((ndvi_serc),2), round((ndvi_arc),2),
                     round((ndmi),2), round((ndmi_serc),2), round((ndmi_arc),2),
                     prc_lstfNdvi, prc_lstfNdmi, prc_ndviNdmi,
-                    pval_lstfNdvi, pval_lstfNdmi, pval_ndviNdmi
+                    pval_lstfNdvi, pval_lstfNdmi, pval_ndviNdmi,
+                    lstf_temporal_str, ndvi_temporal_str, ndmi_temporal_str
                 ])
 conn.commit()
 conn.close()
