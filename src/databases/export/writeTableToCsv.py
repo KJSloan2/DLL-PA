@@ -1,8 +1,8 @@
 import os
-import sys
 import csv
 import shutil
 import sqlite3
+import duckdb
 ##################################################################################
 # Get site info from runtime.db
 conn = sqlite3.connect("runtime.db")
@@ -34,7 +34,7 @@ print(locationId)
 # Prest parameters for DB and Table to export
 
 shutleMapping = {
-    "dll_public_terrain":os.path.join(frontendBase_path,"frontend", "public", "terrain")
+    "dll_public_terrain":os.path.join(frontendBase_path,"frontend", "public", "terrain"),
 }
 
 dbExportMapping = [
@@ -46,25 +46,31 @@ dbExportMapping = [
         "fname_as_site": True, 
         "shutle_to_public": True,
         "shutle_path_key": "dll_public_terrain"
-        },
+    },
+    {
+        "db_name": "tempGeo",
+        "table": "ct_aoi_filtered",
+        "output_dir": os.path.join("output", "aoi_filtered"),
+        "fname_as_site": True,
+        "shutle_to_public": False,
+        "shutle_path_key": None
+    },
 ]
 ##################################################################################
 # Setup conditions for export
-mapping = dbExportMapping[1]
-OUTPUT_FNAME = mapping["table"]
+mapping = dbExportMapping[2]
+output_fName = mapping["table"]
 if mapping["fname_as_site"]:
-    OUTPUT_FNAME = f"{locationId}_ct"
-    
-OUTPUT_SUBFOLDER = mapping["output_dir"]
+    output_fName = f"{locationId}_{mapping['table']}"
 
 DB_NAME = mapping["db_name"]
 TABLE_NAME = mapping["table"]
 ##################################################################################
 # Connect to db to get data
-conn = sqlite3.connect(f"{DB_NAME}.db")
+conn = duckdb.connect(f"{DB_NAME}.duckdb")
 cursor = conn.cursor()
 # Setup export path
-output_path = os.path.join("data", OUTPUT_SUBFOLDER, OUTPUT_FNAME+".csv")
+output_path = os.path.join(mapping["output_dir"], output_fName+".csv")
 # Write to csv
 with open(output_path, mode='w', newline='', encoding='utf-8') as file:
     writer = csv.writer(file)
@@ -85,8 +91,8 @@ print(f"{DB_NAME} - {TABLE_NAME} exported to CSV")
 if mapping["shutle_to_public"]:
     shutle_path = shutleMapping[mapping["shutle_path_key"]]
     try:
-        shutil.copy(output_path, os.path.join(shutle_path, OUTPUT_FNAME+".csv"))
-        print(f"Copied to public_data: {os.path.join(shutle_path, OUTPUT_FNAME+'.csv')}")
+        shutil.copy(output_path, os.path.join(shutle_path, output_fName+".csv"))
+        print(f"Copied to public_data: {os.path.join(shutle_path, output_fName+'.csv')}")
     except Exception as e:
         print("Error copying to public_data:", e)
 ##################################################################################
