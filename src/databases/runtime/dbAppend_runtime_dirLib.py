@@ -8,9 +8,14 @@ CLEAR_TABLE = True
 if CLEAR_TABLE:
     cursor.execute(f"DELETE FROM {TABLE_NAME}")
     
-USER_NAME = ""
+USER_NAME = "kjslo"
 
 dataToAdd = [
+    {
+        "DIR_NAME":"USCB_STATE_TIGER", 
+        "DIR_PATH":f"C:\\Users\\{USER_NAME}\\Documents\\data\\USCB\\Tiger\\State", 
+        "USEAGE":"State-level spatial reference"
+    },
     {
         "DIR_NAME":"USGS_WSS", 
         "DIR_PATH":f"C:\\Users\\{USER_NAME}\\Documents\\data\\USGS\\Web_Soil_Survey", 
