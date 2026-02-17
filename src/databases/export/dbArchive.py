@@ -4,11 +4,11 @@ import shutil
 import sqlite3
 ######################################################################################
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from utils import  get_files, get_directories, get_workspace_paths
+from global_functions.utils import  get_files, get_directories, get_workspace_paths
 ##################################################################################
 workspace_paths = get_workspace_paths()
-workspace_path = workspace_paths["workspace"]
-print(workspace_path)
+workspace_path = workspace_paths["parent"]
+print(workspace_paths)
 ##################################################################################
 conn_runtime = sqlite3.connect(os.path.join(workspace_path, "runtime.db"))
 cursor_runtime = conn_runtime.cursor() 
@@ -41,7 +41,9 @@ print("Location ID:", locationId)
 archiveProcessedData_path = target_path
 ##################################################################################
 dirs = get_directories(archiveProcessedData_path)
-database_list = ["runtime", "usda_nass_cdl", "tempGeo"]
+print(dirs)
+
+database_list = ["runtime.db", "usda_nass_cdl.duckdb", "tempGeo.duckdb"]
 if locationId not  in dirs:
     # Create a new directory in the data storage directory witht the locationId
     os.makedirs(os.path.join(archiveProcessedData_path, locationId))
@@ -52,29 +54,47 @@ else:
     files = get_files(shutle_path)
 
     tablesToKeep = ["dir_lib"]
-    for fName in database_list:
-        db_fName = f"{fName}.db"
-        if db_fName not in files:
-            print(f"Copying {db_fName} to shutle path")
-            #print(f"{db_fName}: {table_names}")
+    for db_fName in database_list:
+        parts = db_fName.split(".")
 
-            try:
-                db_path = os.path.join(os.path.join(workspace_path, db_fName))
-                shutil.copy(db_path, os.path.join(shutle_path, db_fName))
-                print(f"Copied to shutle path: {os.path.join(shutle_path, db_fName)}")
+        if parts[-1] in [".db", ".duckdb"]:
+            if db_fName not in files:
+                print(f"Copying {db_fName} to shutle path")
                 
-                conn = sqlite3.connect(db_fName)
-                cursor = conn.cursor()         
-                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                tables = cursor.fetchall()
-                table_names = [table[0] for table in tables]
+                try:
+                    db_path = os.path.join(workspace_path, db_fName)
+                    shutil.copy(db_path, os.path.join(shutle_path, db_fName))
+                    print(f"Copied to shutle path: {os.path.join(shutle_path, db_fName)}")
+                    
+                    # Determine database type and clear tables
+                    if parts[-1] == ".db":
+                        # SQLite database
+                        conn = sqlite3.connect(os.path.join(shutle_path, db_fName))
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                        tables = cursor.fetchall()
+                        table_names = [table[0] for table in tables]
+                        
+                        for tableName in table_names:
+                            if tableName not in tablesToKeep:
+                                cursor.execute(f"DELETE FROM {tableName}")
+                                print(f"DB:{db_fName} - {tableName} CLEARED")
+                        conn.commit()
+                        conn.close()
+                        
+                    elif parts[-1] == ".duckdb":
+                        # DuckDB database
+                        import duckdb
+                        conn = duckdb.connect(os.path.join(shutle_path, db_fName))
+                        tables_result = conn.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='main'").fetchall()
+                        table_names = [table[0] for table in tables_result]
+                        
+                        for tableName in table_names:
+                            if tableName not in tablesToKeep:
+                                conn.execute(f"DELETE FROM {tableName}")
+                                print(f"DB:{db_fName} - {tableName} CLEARED")
+                        conn.close()
 
-                for tableName in table_names:
-                    if tableName not in tablesToKeep:
-                        cursor.execute(f"DELETE FROM {tableName}")
-                        print(f"DB:{db_fName} - {tableName} CLEARED")
-                conn.close()
-
-            except Exception as e:
-                print("Error copying to shutle path:", e)
+                except Exception as e:
+                    print(f"Error copying to shutle path: {e}")
 ##################################################################################
