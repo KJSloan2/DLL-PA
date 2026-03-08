@@ -8,10 +8,13 @@ import json
 import math
 from typing import List, Tuple
 import sqlite3
+import duckdb
 ######################################################################################
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 #from utils import  json_serialize, make_new_geojson_feature    
 from spatial_utils import haversine, mpolygon_yeild_pts
+from global_functions.utils import get_files
+from global_functions.sqlite_utils import get_table_info
 ######################################################################################
 Point = Tuple[float, float]
 ######################################################################################
@@ -19,9 +22,16 @@ Point = Tuple[float, float]
 script_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.abspath(os.path.join(script_dir, "..", ".."))
 ######################################################################################
-logJson = json.load(open(os.path.join(parent_dir, 'resources', "log.json")))
-locationKey = logJson["location_key"]
-ls8Bounds = logJson["ls8_bounds"]
+DB_NAME = "runtime.db"
+DB_TABLE = "site_info"
+
+def str_to_coords(coord_str):
+    coord_str = coord_str.strip("() ")
+    coords = tuple(float(x.strip()) for x in coord_str.split(","))
+    return coords
+
+siteInfo = get_table_info(DB_NAME, DB_TABLE, ["NAME"])
+siteName = siteInfo['NAME']
 ######################################################################################
 def angle_between_points(p1: Point, p2: Point, degrees: bool = True) -> float:
     """
@@ -66,58 +76,80 @@ def interpolate_points(p1: Point, p2: Point, n_points: int) -> List[Point]:
         for i in range(1, n_points + 1)
     ]
 ######################################################################################
-conn = sqlite3.connect('tempGeo.db')
+conn = duckdb.connect('tempGeo.duckdb')
 cursor = conn.cursor()
 ######################################################################################
 dist_thresh = 10
 output_pts = {"lon": [], "lat": [], "srf": []}
 
-for osmCategory in ["highway", "building", "construction"]:
-
-    data_fName = f"{locationKey}_{osmCategory}.geojson"
-    data_path = os.path.join(parent_dir, "data", "osm", osmCategory, data_fName)
-
+dir_path = os.path.join(parent_dir, "data", "osm")
+files = get_files(dir_path)
+######################################################################################
+validOsmCategories = list(["highway", "building", "construction"])
+for osmCategory in validOsmCategories:
     cursor.execute(f"DELETE FROM {osmCategory}_srf")
     conn.commit()
+######################################################################################
+for fName in files:
+    if fName.endswith(".geojson"):
+        parse_fName = fName.split("_")
+        if parse_fName[0] == siteName:
+            fPath = os.path.join(parent_dir, dir_path, fName)
+            with open(fPath, 'r', encoding='utf-8') as f:
+                geoJson = json.load(f)
+            if "features" in geoJson:
+                for feature in geoJson["features"]:
+                    props = feature["properties"]
+                    osmCategory = props.get("osm_category", "unknown")
 
-    with open(data_path, "r", encoding="utf-8") as f:
-        data_json = json.load(f)
+                    if osmCategory not in validOsmCategories:
+                        continue
+                    
+                    geom = feature["geometry"]
+                    geom_type = geom["type"]
 
-    for feature in data_json["features"]:
-        geometry = feature["geometry"]
-        geometry_type = geometry["type"]
+                    surface_value = f"{osmCategory}_unknown"
+                    if "surface" in props:
+                        surface_value = f"{osmCategory}_{props["surface"]}"
 
-        properties = feature["properties"]
-        if "surface" in properties:
-            surface_value = properties["surface"]
-        else:
-            surface_value = "unknown"
+                    coordinates = []
+                    if geom_type == "LineString":
+                        coordinates = geom["coordinates"]
+                    elif geom_type == "MultiLineString":
+                        for line in geom["coordinates"]:
+                            coordinates.extend(line)
+                    elif geom_type == "Polygon":
+                        for ring in geom["coordinates"]:
+                            coordinates.extend(ring)
+                    elif geom_type == "MultiPolygon":
+                        for polygon in geom["coordinates"]:
+                            for ring in polygon:
+                                coordinates.extend(ring)
+                    if len(coordinates) > 2:
 
-        if geometry_type == "LineString":
-            coordinates = geometry["coordinates"]
+                        for i in range(len(coordinates) - 1):
+                            pt1 = coordinates[i]
+                            pt2 = coordinates[i + 1]
+                            lon1, lat1 = pt1[0], pt1[1]
+                            lon2, lat2 = pt2[0], pt2[1]
 
-            for i in range(len(coordinates) - 1):
-                pt1 = coordinates[i]
-                pt2 = coordinates[i + 1]
-                lon1, lat1 = pt1[0], pt1[1]
-                lon2, lat2 = pt2[0], pt2[1]
+                            dist_mtr = haversine([lon1, lat1], [lon2, lat2])["m"]
+                            new_pts = []
+                            if dist_mtr > dist_thresh:
+                                n_points = int(dist_mtr / dist_thresh)
+                                new_pts.append(interpolate_points(pt1, pt2, n_points))
 
-                dist_mtr = haversine([lon1, lat1], [lon2, lat2])["m"]
-
-                if dist_mtr > dist_thresh:
-                    n_points = int(dist_mtr / dist_thresh)
-                    new_pts = interpolate_points(pt1, pt2, n_points)
-
-                    for pt in new_pts:
-                        cursor.execute(
-                            f'''INSERT INTO {osmCategory+"_srf"} (lon, lat, srf) VALUES (?, ?, ?)''',
-                            (pt[0], pt[1], surface_value)
-                        )
-                cursor.execute(
-                    f'''INSERT INTO {osmCategory+"_srf"} (lon, lat, srf) VALUES (?, ?, ?)''',
-                    (pt1[0], pt1[1], surface_value)
-                    )
-                
+                            for ptLst in new_pts:
+                                for pt1 in ptLst:
+                                    cursor.execute(
+                                        f'''INSERT INTO {osmCategory+"_srf"} (lon, lat, srf) VALUES (?, ?, ?)''',
+                                        (pt1[0], pt1[1], surface_value)
+                                        )
+                                    print(pt1[0], pt1[1], surface_value)
+                    else:
+                        print(len(coordinates), "coordinates, skipping feature")
 conn.commit()
 conn.close()
+
+print("featurePtInterpolation.py complete")
 ######################################################################################
