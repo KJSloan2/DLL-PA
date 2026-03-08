@@ -10,7 +10,7 @@ import json
 import numpy as np
 import rasterio as rio
 from rasterio.plot import show
-
+import pandas as pd
 import duckdb
 ######################################################################################
 import sys
@@ -26,6 +26,7 @@ from global_functions.rasterFunctions import get_tiff_dimensions
 #resampling_size: The size of the pooling window to average and smooth the data
 resampling_size = 1
 geoTigffSpatialResolution = 10
+GKERNAL_SIZE = 5
 ######################################################################################
 script_dir = os.path.dirname(os.path.abspath(__file__))
 split_dir = str(script_dir).split("\\")
@@ -66,8 +67,8 @@ palette = [
 palette = palette[::-1]
 ######################################################################################
 elevationData = {"coordinates":[]}
-zScaler = 0.000008983152841185062
-
+ZSCALE = 0.000008983152841185062
+PXL_DIST = 2.7355724505070387
 fPath_3depe = os.path.join(os.path.join(script_dir, "..", "..", "data", "3dep", "3DEPe"+str(resolution3Dep)+"_"+locationKey+".tif"))
 fPath_3depe = os.path.abspath(fPath_3depe)
 
@@ -78,8 +79,6 @@ with rio.open(fPath_3depe) as src_elevation:
 	src_height = src_elevation.height
 	print(f"Width: {src_width} pixels")
 	print(f"Height: {src_height} pixels")
-
-	b1_elevation = src_elevation.read(1)
 	
 	#Get the bo bounds of the geotif
 	src_bounds = src_elevation.bounds
@@ -99,10 +98,13 @@ with rio.open(fPath_3depe) as src_elevation:
 	print('step_width: ', step_width, 'step_height: ', step_height)
 
 	pts = []
-	b1_elevation = np.array(b1_elevation)
-	pxl_dist = 2.7355724505070387
-	width_ft = src_width*pxl_dist
-	height_ft = src_height*pxl_dist
+	b1Elevation = np.array(src_elevation.read(1))
+
+	gaussian = gaussian_kernel(GKERNAL_SIZE, sigma=1)
+	elevation_smoothed = np.array(apply_gaussian_kernel(b1Elevation, gaussian, GKERNAL_SIZE))
+
+	width_ft = src_width*PXL_DIST
+	height_ft = src_height*PXL_DIST
 	print(f"Distance: {width_ft} feet")
 
 fPath_3deps = os.path.join(os.path.join(script_dir, "..", "..", "data", "3dep", "3DEPs"+str(resolution3Dep)+"_"+locationKey+".tif"))
@@ -119,11 +121,11 @@ output_geo = {
 	"features": []
 }
 
-output = []
+
+
+'''output = []
 coord_y = bb_pt3[1]
 
-elevation_smoothed = np.array(b1_elevation)
-#slope_smoothed = apply_gaussian_kernel(b1_slope, gaussian)
 slope_smoothed = np.array(b1_slope)
 
 pool_b1Elevation = []
@@ -182,7 +184,6 @@ cursor = conn.cursor()
 
 cursor.execute(f"DELETE FROM three_dep")
 conn.commit()
-
 for idx, row in enumerate(output):
 	#"lon":coord_x, "lat":coord_y, "elv_rel":elv_rel, "elv_real": elv, "idx_row": j, "idx_col": i}
 	cursor.execute(
@@ -197,9 +198,85 @@ for idx, row in enumerate(output):
 			to_py_type(output[idx]["lat"]), to_py_type(output[idx]["lon"]), 
 			to_py_type(output[idx]["elv_rel"]), to_py_type(output[idx]["elv"]), 0
 		))
-
+	
 conn.commit()
+conn.close()'''
+
+
+######################################################################################
+output = []
+coord_y = bb_pt3[1]
+
+slope_smoothed = np.array(b1_slope)
+
+pool_b1Elevation = []
+for i, (ei, si) in enumerate(zip(elevation_smoothed, slope_smoothed)):
+    for j, (ej, sj) in enumerate(zip(ei, si)):
+        pool_b1Elevation.append(round(ei[j], 2))
+
+b1Elevation_min = min(pool_b1Elevation)
+b1Elevation_max = max(pool_b1Elevation)
+print("MIN-MAX: ", b1Elevation_min, b1Elevation_max)
+
+for i in range(1, src_height - (resampling_size + 1), resampling_size):
+    coord_x = bb_pt3[0]
+
+    for j in range(1, src_width - (resampling_size + 1), resampling_size):
+        elevation_window = elevation_smoothed[i:i + resampling_size, j:j + resampling_size]
+        elv = round(float(np.mean(elevation_window)), 2)
+
+        coord_x += step_width
+        elv_rel = elv - b1Elevation_min
+
+        output.append({
+            "rowId": len(output),
+            "idx_row": int(j),
+            "idx_col": int(i),
+            "lat": float(coord_y),
+            "lon": float(coord_x),
+            "elv_rel": float(elv_rel),
+            "elv": float(elv),
+            "slope": 0.0
+        })
+
+    coord_y += step_height
+
+# Optional JSON export
+output_dir = os.path.join(parent_dir, "output", "3dep")
+os.makedirs(output_dir, exist_ok=True)
+
+with open(
+    os.path.join(output_dir, f"{locationKey}_3DEP_terrain.json"),
+    "w",
+    encoding="utf-8"
+) as output_json:
+    json.dump(output, output_json, ensure_ascii=False)
+
+# Bulk load into DuckDB
+df = pd.DataFrame(output)
+
+conn = duckdb.connect("tempGeo.duckdb")
+
+conn.execute("BEGIN TRANSACTION")
+conn.execute("DELETE FROM three_dep")
+conn.register("three_dep_df", df)
+
+conn.execute("""
+    INSERT INTO three_dep (
+        rowId, idx_row, idx_col,
+        lat, lon,
+        elv_rel, elv, slope
+    )
+    SELECT
+        rowId, idx_row, idx_col,
+        lat, lon,
+        elv_rel, elv, slope
+    FROM three_dep_df
+""")
+conn.execute("COMMIT")
+
 conn.close()
+######################################################################################
 ######################################################################################
 try:
     print("Starting 3DEP-Landsat8 composite processing...")
