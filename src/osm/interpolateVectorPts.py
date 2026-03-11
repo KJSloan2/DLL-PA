@@ -79,7 +79,7 @@ def interpolate_points(p1: Point, p2: Point, n_points: int) -> List[Point]:
 conn = duckdb.connect('tempGeo.duckdb')
 cursor = conn.cursor()
 ######################################################################################
-dist_thresh = 10
+DIST_THRESH = 10
 output_pts = {"lon": [], "lat": [], "srf": []}
 
 dir_path = os.path.join(parent_dir, "data", "osm")
@@ -94,16 +94,20 @@ for fName in files:
     if fName.endswith(".geojson"):
         parse_fName = fName.split("_")
         if parse_fName[0] == siteName:
+            fileOsmCategory = parse_fName[1][:-8]
             fPath = os.path.join(parent_dir, dir_path, fName)
             with open(fPath, 'r', encoding='utf-8') as f:
                 geoJson = json.load(f)
+
+            rowsAdded = 0
+            print(fileOsmCategory)
             if "features" in geoJson:
                 for feature in geoJson["features"]:
                     props = feature["properties"]
-                    osmCategory = props.get("osm_category", "unknown")
+                    osmCategory = props.get(fileOsmCategory, "unknown")
 
-                    if osmCategory not in validOsmCategories:
-                        continue
+                    #if osmCategory not in validOsmCategories:
+                    #    continue
                     
                     geom = feature["geometry"]
                     geom_type = geom["type"]
@@ -135,19 +139,22 @@ for fName in files:
 
                             dist_mtr = haversine([lon1, lat1], [lon2, lat2])["m"]
                             new_pts = []
-                            if dist_mtr > dist_thresh:
-                                n_points = int(dist_mtr / dist_thresh)
+                            if dist_mtr > DIST_THRESH:
+                                n_points = int(dist_mtr / DIST_THRESH)
                                 new_pts.append(interpolate_points(pt1, pt2, n_points))
 
                             for ptLst in new_pts:
                                 for pt1 in ptLst:
                                     cursor.execute(
-                                        f'''INSERT INTO {osmCategory+"_srf"} (lon, lat, srf) VALUES (?, ?, ?)''',
+                                        f'''INSERT INTO {fileOsmCategory+"_srf"} (lon, lat, srf) VALUES (?, ?, ?)''',
                                         (pt1[0], pt1[1], surface_value)
                                         )
-                                    print(pt1[0], pt1[1], surface_value)
+                                    #print(pt1[0], pt1[1], surface_value)
+                                    rowsAdded += 1
                     else:
                         print(len(coordinates), "coordinates, skipping feature")
+            print(fileOsmCategory, " - rows added: ", rowsAdded)
+
 conn.commit()
 conn.close()
 
