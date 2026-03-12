@@ -1,19 +1,41 @@
-import json
 import os
+import sys
+import subprocess
+import json
+import sqlite3
 ######################################################################################
 # Get the full path of the script
 script_dir = os.path.dirname(os.path.abspath(__file__))
+
 parent_dir = os.path.abspath(os.path.join(script_dir, "..", ".."))
 root_dir = os.path.abspath(os.path.join(parent_dir, ".."))
 
+databaseSriptsDir = os.path.join(parent_dir, "src", "databases")
+
 logJson = json.load(open(os.path.join(parent_dir, 'resources', "log.json")))
 
-lib_dir = os.path.join(root_dir, "frontend", "src", "lib")
+lib_dir = os.path.join(r"C:\Users\Kjslo\Documents\local_dev\dynamic_lands_lab\frontend\src\lib")
 siteFileMap = json.load(open(os.path.join(lib_dir, "siteFileMap.json")))
 
 public_dir = os.path.join(root_dir, "frontend", "public", "acs")
 #######################################################################################
-# Walk up the directory tree until we find "src"
+databasesToCreate = {
+    "runtime.db": {"script_subdir": "runtime", "script_name": "dbNew_runtime.py"},
+    "tempGeo.duckdb": {"script_subdir": "terrain_composite", "script_name": "duckDb_create_terrainComposite.py"},
+    "'usda_nass_cdl.duckdb'": {"script_subdir": "cropland", "script_name": "dbCreate_cropland.py"}
+}
+for dbName, dbInfo in databasesToCreate.items():
+    try:
+        print(f"Creating {dbName}...")
+        script_path = os.path.join(databaseSriptsDir, dbInfo["script_subdir"], dbInfo["script_name"])
+        subprocess.run([sys.executable, script_path], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error running {dbInfo['script_name']}: {e}")
+    except Exception as e:
+        print(f"Unexpected error running {dbInfo['script_name']}: {e}")
+#######################################################################################
+
+# Walk up the directory tree until it finds "src"
 parts = script_dir.split(os.sep)
 try:
     idx_src = parts.index("src")
@@ -105,10 +127,39 @@ if location_key not in siteFileMap:
         "acs_s2801": None,
         "coordinates": [],
     }
+
+######################################################################################
+TABLE_NAME = "site_info"
+RESET_TABLE = True
+
+conn = sqlite3.connect('runtime.db')
+cursor = conn.cursor()
+
+if RESET_TABLE:
+    cursor.execute(f"DELETE FROM {TABLE_NAME}")
+    conn.commit()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        '''INSERT INTO site_info (
+        NAME) 
+        VALUES (?)''',
+        ( location_key, )
+    )
+
+#print upated site_info
+cursor.execute(f"SELECT * FROM {TABLE_NAME}")
+rows = cursor.fetchall()
+headers = [description[0] for description in cursor.description]
+for row in rows:
+    row_dict = dict(zip(headers, row))
+    print(row_dict)
+    
+conn.commit()
+conn.close()
 ######################################################################################
 with open(os.path.join(lib_dir, "siteFileMap.json"), "w", encoding='utf-8') as json_siteFileMap:
 	json_siteFileMap.write(json.dumps(siteFileMap, indent=2, ensure_ascii=False))
-print("terrainComposite.py DONE")
 
 # Write the log to backend/resources/<location_key>_log.json
 output_path = os.path.join(resources_path, "log.json")
