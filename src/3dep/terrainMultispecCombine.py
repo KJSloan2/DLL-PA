@@ -24,7 +24,20 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from global_functions.utils import safe_round, polygon_filter, fill_nulls
 from spatial_utils import pt_in_geom, nearby_feature
 from global_functions.multispecFunctions import classify_land_cover
+from global_functions.sqlite_utils import get_table_info
 ######################################################################################
+DB_NAME = "runtime.db"
+DB_TABLE = "site_info"
+
+siteInfo = get_table_info(DB_NAME, DB_TABLE, ["NAME", "AOI_BB_PT_SW", "AOI_BB_PT_NE", "AOI_CENTROID", "STATE_FIPS", "COUNTY_FIPS"])
+siteName = siteInfo['NAME']
+aoi_bb_pt_sw = siteInfo["AOI_BB_PT_SW"]
+aoi_bb_pt_ne = siteInfo["AOI_BB_PT_NE"]
+aoi_centroid = siteInfo["AOI_CENTROID"]
+stateFips = siteInfo["STATE_FIPS"]
+countyFips = siteInfo["COUNTY_FIPS"]
+######################################################################################
+
 def list_files(directory):
 	return [f for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f))]
 ######################################################################################
@@ -57,18 +70,18 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.abspath(os.path.join(script_dir, "..", ".."))
 root_dir = os.path.abspath(os.path.join(parent_dir, ".."))
 ######################################################################################
-logJson = json.load(open(os.path.join(parent_dir, 'resources', "log.json")))
-locationKey = logJson["location_key"]
-######################################################################################
-print(locationKey)
+print(f"Site name: {siteName}")
 conn_refDb = sqlite3.connect('runtime.db')
 cursor_refDb = conn_refDb.cursor()
-cursor_refDb.execute("SELECT HAS_HYDRO_FEATURES FROM site_info WHERE NAME = ?", (locationKey,))
+cursor_refDb.execute("SELECT HAS_HYDRO_FEATURES FROM site_info WHERE NAME = ?", (siteName,))
 result_siteInfo = cursor_refDb.fetchone()
-hasHydroFeatures = result_siteInfo[0] == "True"
+hasHydroFeatures = result_siteInfo[0]
+
+print(f"Has hydro TIGER features: {hasHydroFeatures}")
+
 hydroFeatureGeom = []
 if hasHydroFeatures:
-	hydroFeatures_fName = locationKey+"_hydro.geojson"
+	hydroFeatures_fName = siteName+"_hydro.geojson"
 	hydroFeatures_geojson_path = os.path.join("data", "hydro", hydroFeatures_fName)
 	with open(hydroFeatures_geojson_path, "r") as hydroFeatures_geojson_file:
 		hydroFeatures_geojson = json.load(hydroFeatures_geojson_file)
@@ -79,14 +92,13 @@ if hasHydroFeatures:
 				hydroFeatureGeom.append(Polygon(feature_geometry["coordinates"][0]))
 
 ######################################################################################
-
 publicTerrain_dir = os.path.join(root_dir, "output", "terrain")
 #lib_dir = os.path.join(root_dir, "frontend", "src", "lib")
 #siteFileMap = json.load(open(os.path.join(lib_dir, "siteFileMap.json")))
 
 #public_dir = os.path.join(root_dir, "frontend", "public", "acs")
 ######################################################################################
-ls8Files = list_files(os.path.join(parent_dir, 'output', 'landsat', locationKey, 'tiles'))
+ls8Files = list_files(os.path.join(parent_dir, 'output', 'landsat', siteName, 'tiles'))
 storeLs8FileYears = []
 for f in ls8Files:
 	spit_f = f.split('_')
@@ -96,11 +108,6 @@ for f in ls8Files:
 		fYear = spit_f[0]
 		print("fYear: ", fYear)
 		storeLs8FileYears.append(int(fYear))
-# Use the most recent year available in the Landsat data
-mostRecentYear = max(storeLs8FileYears)
-
-step_width = logJson["ls8_bounds"][str(mostRecentYear)]["step_width"]
-step_height = logJson["ls8_bounds"][str(mostRecentYear)]["step_height"]
 ######################################################################################
 fc = {
 	"type": "FeatureCollection",
@@ -245,7 +252,7 @@ else:
 			compositeTerrain["ndmi_temporal"].append(ndmi_temporal)
 
 ######################################################################################
-outputFileName = locationKey+'_3depLs8Comp.csv'
+outputFileName = siteName+'_3depLs8Comp.csv'
 outputPath = os.path.join(publicTerrain_dir, outputFileName)
 
 ranges = {}
@@ -352,7 +359,7 @@ def get_distance_value(mean_dist):
 cursor.execute("DELETE FROM terrain_composite")
 conn.commit()
 ######################################################################################
-MAX_DIST_FT = 300
+MAX_DIST_FT = 150
 MIN_DIST_FT = 10
 
 distance_by_srf = {
@@ -385,6 +392,8 @@ for osmCategory in ["highway", "building", "construction"]:
 			"rows": osmFturRows
 		}
 
+print("Finished building CKDTrees for OSM features.")
+######################################################################################
 # Now process each terrain point once
 for idx, dfRow in df_compositeTerrain.iterrows():
 	#ctLat, ctLon = dfRow['lat'], dfRow['lon']
@@ -468,7 +477,7 @@ for idx, dfRow in df_compositeTerrain.iterrows():
 	ndmi_temporal_str = f"[{','.join([f'{x:.1f}' for x in dfRow['ndmi_temporal']])}]"
 	
 	# Insert into database once per terrain point
-	try:
+	"""try:
 		cursor.execute(
 			'''INSERT INTO terrain_composite (
 			geoid, lat, lon, lstf, lstf_serc, 
@@ -526,7 +535,7 @@ for idx, dfRow in df_compositeTerrain.iterrows():
 		)
 	
 	except Exception as e:
-		print(f"Error inserting row {idx}: {e}")
+		print(f"Error inserting row {idx}: {e}")"""
 
 conn.commit()
 conn.close()
