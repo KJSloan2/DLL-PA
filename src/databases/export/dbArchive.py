@@ -54,7 +54,7 @@ else:
     shutle_path = os.path.join(archiveProcessedData_path, locationId)
     files = get_files(shutle_path)
 
-    tablesToKeep = ["dir_lib", "site_info"]
+    tablesToKeep = ["dir_lib"]
     for db_fName in database_list:
         parts = db_fName.split(".")
         print(parts)
