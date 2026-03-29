@@ -44,17 +44,6 @@ with open(log_path, "r", encoding="utf-8") as f:
 
 locationKey = logJson["location_key"]
 resolution3Dep = logJson["3dep_resolution"]
-
-#logJson = json.load(open(os.path.join('resources', "log.json")))
-#backend\data\3dep\PineSprings\3DEPs10m_PineSprings.tif
-
-'''Read parameters to get analysis location, year, etc.
-These parameters tell the program what files to read and how to process them'''
-'''analysis_parameters = json.load(open("%s%s" % (r"00_resources/","analysis_parameters.json")))
-locationKey = analysis_parameters["location_key"]
-yearRange = [analysis_parameters["year_start"],analysis_parameters["year_end"]]
-analysis_version = analysis_parameters["analysis_version"]
-start_time = time.time()'''
 ######################################################################################
 #Color palette for color coding points based on elevation
 palette = [
@@ -121,104 +110,71 @@ output_geo = {
 	"features": []
 }
 
-
-
-'''output = []
-coord_y = bb_pt3[1]
-
-slope_smoothed = np.array(b1_slope)
-
-pool_b1Elevation = []
-for i, (ei, si) in enumerate(zip(elevation_smoothed, slope_smoothed)):
-	for j, (ej,sj) in enumerate(zip(ei, si)):
-		pool_b1Elevation.append(round((ei[j]),2))
-
-b1Elevation_min = min(pool_b1Elevation)
-b1Elevation_max = max(pool_b1Elevation)
-print("MIN-MAX: ", b1Elevation_min, b1Elevation_max)
-
-pool_coords = [[],[]]
-
-for i in range(1,src_height-(resampling_size+1),resampling_size):
-	coord_x = bb_pt3[0]
-	for j in range(1,src_width-(resampling_size+1),resampling_size):
-		#bands_output["coordinates"][-1].append([round((coord_x),3),round((coord_y),3)])
-		#get elevation data inside the resample window
-		elevation_window = elevation_smoothed[i:i + resampling_size, j:j + resampling_size]
-		elv = float(np.mean(elevation_window))
-		elv = round((elv),2)
-
-		try:
-			coord_x+=step_width
-			#calculate the reletive elevation
-			elv_rel = elv-b1Elevation_min
-			elv_scaled = compress_and_scale_color(elv, b1Elevation_min, b1Elevation_max, palette, target_min=0)
-			
-			output.append({"lon":coord_x, "lat":coord_y, "elv_rel":elv_rel, "elv": elv, "idx_row": j, "idx_col": i})
-			pool_coords[0].append(coord_y)
-			pool_coords[1].append(coord_x)
-			#print(elevation_window)
-			#time.sleep(1)
-		except Exception as e:
-			#print(e)
-			#print("elevation_window: ", elevation_window)
-			continue 
-	coord_y+=step_height
-######################################################################################
-output_dir = os.path.join(parent_dir, "output", "3dep")
-os.makedirs(output_dir, exist_ok=True)
-
-with open(os.path.join(output_dir, locationKey+'_3DEP_terrain.json'), "w", encoding='utf-8') as output_json:
-	output_json.write(json.dumps(output, default=json_serialize, ensure_ascii=False))
-	
-class NumpyEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, (np.integer, np.floating)):
-            return obj.item()
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return super().default(obj)
-######################################################################################
-conn = duckdb.connect('tempGeo.duckdb')
-cursor = conn.cursor()
-
-cursor.execute(f"DELETE FROM three_dep")
-conn.commit()
-for idx, row in enumerate(output):
-	#"lon":coord_x, "lat":coord_y, "elv_rel":elv_rel, "elv_real": elv, "idx_row": j, "idx_col": i}
-	cursor.execute(
-		"""INSERT INTO three_dep (
-			rowId, idx_row, idx_col,
-			lat, lon,
-			elv_rel, elv, slope
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-		(
-			idx,
-   			to_py_type(output[idx]["idx_row"]), to_py_type(output[idx]["idx_col"]),
-			to_py_type(output[idx]["lat"]), to_py_type(output[idx]["lon"]), 
-			to_py_type(output[idx]["elv_rel"]), to_py_type(output[idx]["elv"]), 0
-		))
-	
-conn.commit()
-conn.close()'''
-
-
 ######################################################################################
 output = []
 coord_y = bb_pt3[1]
 
 slope_smoothed = np.array(b1_slope)
 
-pool_b1Elevation = []
+'''pool_b1Elevation = []
 for i, (ei, si) in enumerate(zip(elevation_smoothed, slope_smoothed)):
     for j, (ej, sj) in enumerate(zip(ei, si)):
-        pool_b1Elevation.append(round(ei[j], 2))
+        pool_b1Elevation.append(round(ei[j], 2))'''
 
-b1Elevation_min = min(pool_b1Elevation)
-b1Elevation_max = max(pool_b1Elevation)
+#b1Elevation_min = min(pool_b1Elevation)
+#b1Elevation_max = max(pool_b1Elevation)
+
+b1Elevation_min = float(elevation_smoothed.min())
+b1Elevation_max = float(elevation_smoothed.max())
+
 print("MIN-MAX: ", b1Elevation_min, b1Elevation_max)
 
+total_points = ((src_height - resampling_size - 1) // resampling_size) * \
+               ((src_width - resampling_size - 1) // resampling_size)
+
+rowIds = np.arange(total_points)
+idx_rows = np.zeros(total_points, dtype=np.int32)
+idx_cols = np.zeros(total_points, dtype=np.int32)
+lats = np.zeros(total_points, dtype=np.float64)
+lons = np.zeros(total_points, dtype=np.float64)
+elvs = np.zeros(total_points, dtype=np.float64)
+elv_rels = np.zeros(total_points, dtype=np.float64)
+
+idx = 0
+coord_y = bb_pt3[1]
+
 for i in range(1, src_height - (resampling_size + 1), resampling_size):
+    coord_x = bb_pt3[0]
+    for j in range(1, src_width - (resampling_size + 1), resampling_size):
+        elevation_window = elevation_smoothed[i:i + resampling_size, j:j + resampling_size]
+        elv = np.mean(elevation_window)
+        
+        coord_x += step_width
+
+        rowIds[idx] = idx
+        idx_rows[idx] = j
+        idx_cols[idx] = i
+        lats[idx] = coord_y
+        lons[idx] = coord_x
+        elvs[idx] = elv
+        elv_rels[idx] = elv - b1Elevation_min
+        
+        idx += 1
+    
+    coord_y += step_height
+    
+df = pd.DataFrame({
+    'rowId': rowIds,
+    'idx_row': idx_rows,
+    'idx_col': idx_cols,
+    'lat': lats,
+    'lon': lons,
+    'elv': np.round(elvs, 2),
+    'elv_rel': np.round(elv_rels, 2),
+    'slope': 0.0
+})
+
+'''for i in range(1, src_height - (resampling_size + 1), resampling_size):
     coord_x = bb_pt3[0]
 
     for j in range(1, src_width - (resampling_size + 1), resampling_size):
@@ -239,7 +195,7 @@ for i in range(1, src_height - (resampling_size + 1), resampling_size):
             "slope": 0.0
         })
 
-    coord_y += step_height
+    coord_y += step_height'''
 
 # Optional JSON export
 output_dir = os.path.join(parent_dir, "output", "3dep")
@@ -253,36 +209,106 @@ with open(
     json.dump(output, output_json, ensure_ascii=False)
 
 # Bulk load into DuckDB
-df = pd.DataFrame(output)
+#df = pd.DataFrame(output)
 
-conn = duckdb.connect("tempGeo.duckdb")
+conn = None
+max_retries = 3
+retry_delay = 2
 
-conn.execute("BEGIN TRANSACTION")
-conn.execute("DELETE FROM three_dep")
-conn.register("three_dep_df", df)
+'''try:
+    temp_conn = duckdb.connect("tempGeo.duckdb")
+    temp_conn.execute("CHECKPOINT")
+    temp_conn.close()
+    time.sleep(1)
+except:
+    pass'''
 
-conn.execute("""
-    INSERT INTO three_dep (
-        rowId, idx_row, idx_col,
-        lat, lon,
-        elv_rel, elv, slope
-    )
-    SELECT
-        rowId, idx_row, idx_col,
-        lat, lon,
-        elv_rel, elv, slope
-    FROM three_dep_df
-""")
-conn.execute("COMMIT")
+for attempt in range(max_retries):
+    try:
+        conn = duckdb.connect("tempGeo.duckdb", read_only=False)
+        break
+    except Exception as e:
+        if attempt < max_retries - 1:
+            print(f"Database connection attempt {attempt + 1} failed. Retrying in {retry_delay}s...")
+            time.sleep(retry_delay)
+        else:
+            print(f"Failed to connect to database after {max_retries} attempts: {e}")
+            raise
 
-conn.close()
+if conn is None:
+    raise RuntimeError("Could not establish database connection")
+
+print(f"DataFrame shape: {df.shape}")
+print(f"Total rows to insert: {len(df):,}")
+
+try:
+    '''print("Starting database transaction...")
+    conn.execute("BEGIN TRANSACTION")
+    
+    print("Truncating old data...")
+    conn.execute("TRUNCATE TABLE three_dep")
+    
+    print("Registering DataFrame...")
+    conn.register("three_dep_df", df)
+
+    print("Inserting new data...")
+    conn.execute("""
+        INSERT INTO three_dep (
+            rowId, idx_row, idx_col,
+            lat, lon,
+            elv_rel, elv, slope
+        )
+        SELECT
+            rowId, idx_row, idx_col,
+            lat, lon,
+            elv_rel, elv, slope
+        FROM three_dep_df
+    """)'''
+    
+    conn.register("three_dep_df", df)
+
+    conn.execute("""
+        CREATE OR REPLACE TABLE three_dep AS
+        SELECT
+            rowId, idx_row, idx_col,
+            lat, lon,
+            elv_rel, elv, slope
+        FROM three_dep_df
+    """)
+
+    #print("Committing transaction...")
+    #conn.execute("COMMIT")
+    
+except KeyboardInterrupt:
+    print("\nOperation interrupted by user. Rolling back changes...")
+    if conn:
+        try:
+            conn.execute("ROLLBACK")
+        except:
+            pass
+    raise
+except Exception as e:
+    print(f"Error during database operation: {e}")
+    if conn:
+        try:
+            conn.execute("ROLLBACK")
+        except:
+            pass
+    raise
+finally:
+    if conn:
+        conn.close()
+
+print("3DEP terrain data processing and loading complete.")
 ######################################################################################
 ######################################################################################
+'''scriptToRun = "terrainDirectionalSignals.py"
 try:
     print("Starting 3DEP-Landsat8 composite processing...")
-    script_path = os.path.join(script_dir, "3depLs8CompV2.py")
-    subprocess.run(["python", script_path], check=True)
+    script_path = os.path.join(script_dir, scriptToRun)
+    #subprocess.run(["python", script_path], check=True)
+    subprocess.run([sys.executable, script_path], check=True)
 except subprocess.CalledProcessError as e:
-    print(f"Error running 3depLs8CompV2.py: {e}")
+    print(f"Error running {scriptToRun}: {e}")
 except Exception as e:
-    print(f"Unexpected error running 3depLs8CompV2.py: {e}")
+    print(f"Unexpected error running {scriptToRun}: {e}")'''
