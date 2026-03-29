@@ -34,7 +34,7 @@ if target_path:
     csv_reader = csv.DictReader(csv_file)
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
     DB_NAME = 'usda_nass_cdl.duckdb'
-    TABLE_NAME = 'land_cover_classification_ref'
+    TABLE_NAME = 'classification_ref'
     conn = duckdb.connect(DB_NAME)
     cursor = conn.cursor()
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
