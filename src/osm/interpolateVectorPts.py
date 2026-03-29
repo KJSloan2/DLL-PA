@@ -18,7 +18,6 @@ from global_functions.sqlite_utils import get_table_info
 ######################################################################################
 Point = Tuple[float, float]
 ######################################################################################
-# Make this process into a reusable function to use across the codebase
 script_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.abspath(os.path.join(script_dir, "..", ".."))
 ######################################################################################
@@ -31,7 +30,7 @@ def str_to_coords(coord_str):
     return coords
 
 siteInfo = get_table_info(DB_NAME, DB_TABLE, ["NAME"])
-siteName = siteInfo['NAME']
+siteName = siteInfo["NAME"]
 ######################################################################################
 def angle_between_points(p1: Point, p2: Point, degrees: bool = True) -> float:
     """

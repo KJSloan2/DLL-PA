@@ -2,7 +2,6 @@ import os
 import sys
 import json
 import subprocess
-import sqlite3
 ######################################################################################
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from global_functions.utils import  json_serialize, to_py_type
@@ -27,13 +26,14 @@ def str_to_coords(coord_str):
     return coords
 
 siteInfo = get_table_info(DB_NAME, DB_TABLE, ["NAME", "AOI_BB_PT_SW", "AOI_BB_PT_NE", "AOI_CENTROID", "STATE_FIPS", "COUNTY_FIPS"])
-siteName = siteInfo['NAME']
+print(siteInfo)
+siteName = siteInfo["NAME"]
 aoi_bb_pt_sw = str_to_coords(siteInfo["AOI_BB_PT_SW"])
 aoi_bb_pt_ne = str_to_coords(siteInfo["AOI_BB_PT_NE"])
 aoi_centroid = str_to_coords(siteInfo["AOI_CENTROID"])
 stateFips = siteInfo["STATE_FIPS"]
 countyFips = siteInfo["COUNTY_FIPS"]
-
+######################################################################################
 bbox = complete_bbox((aoi_bb_pt_sw[0], aoi_bb_pt_sw[1]), (aoi_bb_pt_ne[0], aoi_bb_pt_ne[1]))
 
 west_lon = min(bbox["pt_sw"][0], bbox["pt_ne"][0])

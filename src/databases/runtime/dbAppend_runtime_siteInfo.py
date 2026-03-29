@@ -2,7 +2,7 @@ import os
 import sys
 import json
 import sqlite3
-
+######################################################################################
 script_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.abspath(os.path.join(script_dir, "..", "..", ".."))
 
@@ -56,10 +56,8 @@ dataToAdd = [
         "AOI_CENTROID": str(centroid)
         },
 ]
-
+######################################################################################
 for data in dataToAdd:
-    print(data)
-    
     # Add the INSERT statement
     cursor.execute(
         '''INSERT INTO site_info (
@@ -75,6 +73,7 @@ for data in dataToAdd:
             data["AOI_BB_PT_SW"], data["AOI_BB_PT_SE"], data["AOI_BB_PT_NW"], data["AOI_BB_PT_NE"], data["AOI_CENTROID"]
             )
     )
-
+######################################################################################
 conn.commit()
 conn.close()
+print(f"{TABLE_NAME} in runtime.db updated")
