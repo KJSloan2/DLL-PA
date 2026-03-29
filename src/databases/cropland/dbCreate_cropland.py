@@ -14,7 +14,7 @@ def create_table(table_name, columns):
 
 conn = duckdb.connect('usda_nass_cdl.duckdb')
 
-create_table('land_cover_classification_ref', {
+create_table('classification_ref', {
     'VAL': 'INTEGER PRIMARY KEY',
     'HEX_COLOR': 'VARCHAR',
     'R': 'INTEGER',
