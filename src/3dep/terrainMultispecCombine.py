@@ -7,6 +7,8 @@ import csv
 import json
 import sqlite3
 import duckdb
+import pyarrow as pa
+import polars
 
 import pandas as pd
 import numpy as np
@@ -15,6 +17,9 @@ import shapely
 from shapely.geometry import Point, Polygon
 from scipy.spatial import cKDTree
 from datetime import datetime
+
+import subprocess
+
 '''from shapely.geometry import MultiLineString, Polygon, MultiPolygon, Point, shape, mapping
 from shapely.geometry.base import BaseGeometry'''
 ################### ###################################################################
@@ -25,6 +30,7 @@ from global_functions.utils import safe_round, polygon_filter, fill_nulls
 from spatial_utils import pt_in_geom, nearby_feature
 from global_functions.multispecFunctions import classify_land_cover
 from global_functions.sqlite_utils import get_table_info
+from databases.terrain_composite.duckDb_create_terrainComposite import create_duckDb_terrainComposite
 ######################################################################################
 DB_NAME = "runtime.db"
 DB_TABLE = "site_info"
@@ -37,7 +43,6 @@ aoi_centroid = siteInfo["AOI_CENTROID"]
 stateFips = siteInfo["STATE_FIPS"]
 countyFips = siteInfo["COUNTY_FIPS"]
 ######################################################################################
-
 def list_files(directory):
 	return [f for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f))]
 ######################################################################################
@@ -80,6 +85,7 @@ hasHydroFeatures = result_siteInfo[0]
 print(f"Has hydro TIGER features: {hasHydroFeatures}")
 
 hydroFeatureGeom = []
+ptsInHydroFeatures = 0
 if hasHydroFeatures:
 	hydroFeatures_fName = siteName+"_hydro.geojson"
 	hydroFeatures_geojson_path = os.path.join("data", "hydro", hydroFeatures_fName)
@@ -90,24 +96,9 @@ if hasHydroFeatures:
 			geometry_type = feature_geometry["type"]
 			if geometry_type == "Polygon":
 				hydroFeatureGeom.append(Polygon(feature_geometry["coordinates"][0]))
+				ptsInHydroFeatures+=1
+print(f"Pts in hydro features: {ptsInHydroFeatures}")
 
-######################################################################################
-publicTerrain_dir = os.path.join(root_dir, "output", "terrain")
-#lib_dir = os.path.join(root_dir, "frontend", "src", "lib")
-#siteFileMap = json.load(open(os.path.join(lib_dir, "siteFileMap.json")))
-
-#public_dir = os.path.join(root_dir, "frontend", "public", "acs")
-######################################################################################
-ls8Files = list_files(os.path.join(parent_dir, 'output', 'landsat', siteName, 'tiles'))
-storeLs8FileYears = []
-for f in ls8Files:
-	spit_f = f.split('_')
-	spit_f = spit_f[-1].split('.')
-	ext = spit_f[-1]
-	if ext == "geojson":
-		fYear = spit_f[0]
-		print("fYear: ", fYear)
-		storeLs8FileYears.append(int(fYear))
 ######################################################################################
 fc = {
 	"type": "FeatureCollection",
@@ -177,6 +168,7 @@ if threeDepData.empty:
 		compositeTerrain["ndvi_temporal"].append(ndvi_temporal)
 		compositeTerrain["ndmi_temporal"].append(ndmi_temporal)
 else:
+	print("Begin 3DEP + Landsat composite processing")
 	for idx, row in multiSpecData.iterrows():
 		#lon,lat,lstf,lstf_serc,lstf_arc,ndvi,ndvi_serc,ndvi_arc
 		lstf = row["lstf"]
@@ -199,8 +191,10 @@ else:
 		pt = Point(row['lat'], row['lon'])
 		landsatPoints.append(pt)
 
+	print("Construct landsatCkdTree")
 	landsatCkdTreePoints = np.array([[p.x, p.y] for p in landsatPoints])
 	landsatCkdTree = cKDTree(landsatCkdTreePoints)
+	print("Construct landsatCkdTree complete")
 	######################################################################################
 	for idx, threeDepPt in threeDepData.iterrows():
 		addPoint = True
@@ -250,11 +244,10 @@ else:
 			compositeTerrain["lstf_temporal"].append(lstf_temporal)
 			compositeTerrain["ndvi_temporal"].append(ndvi_temporal)
 			compositeTerrain["ndmi_temporal"].append(ndmi_temporal)
+	
+	print(f"{len(compositeTerrain['lat'])} Composite points added")
 
-######################################################################################
-outputFileName = siteName+'_3depLs8Comp.csv'
-outputPath = os.path.join(publicTerrain_dir, outputFileName)
-
+######################################################################################\
 ranges = {}
 rangeKeys = ["lstf", "ndvi", "ndmi"]
 for key in rangeKeys:
@@ -351,15 +344,23 @@ df_compositeTerrain = pd.DataFrame({
 	"ndvi_temporal": compositeTerrain["ndvi_temporal"],
 	"ndmi_temporal": compositeTerrain["ndmi_temporal"]
 })
-
+print("df_compositeTerrain created with ", len(df_compositeTerrain), " rows")
 ######################################################################################
 def get_distance_value(mean_dist):
 	return mean_dist if mean_dist is not None else 0
 ######################################################################################
-cursor.execute("DELETE FROM terrain_composite")
-conn.commit()
+#cursor.execute("DELETE FROM terrain_composite")
+#conn.commit()
+
+#create_duckDb_terrainComposite(conn)
+
+conn.execute("DROP TABLE IF EXISTS terrain_composite")
+
+create_duckDb_terrainComposite(conn)
+
+print("Recreate terrain_composite")
 ######################################################################################
-MAX_DIST_FT = 150
+MAX_DIST_FT = 300
 MIN_DIST_FT = 10
 
 distance_by_srf = {
@@ -372,7 +373,7 @@ distance_by_srf = {
 }
 
 # Build CKDTrees for all OSM feature categories first
-osmFeatureTrees = {}
+'''osmFeatureTrees = {}
 for osmCategory in ["highway", "building", "construction"]:
 	query = f"SELECT * FROM {osmCategory}_srf"
 	cursor.execute(query)
@@ -384,17 +385,44 @@ for osmCategory in ["highway", "building", "construction"]:
 		geoid, lat, lon, srf = row[0], row[1], row[2], row[3]
 		osmFturPts.append((lon, lat))
 		osmFturRows.append(row)
-
+	print(f"Construct CKDTree for {osmCategory}: {len(osmFturPts)} points")
 	if osmFturPts:
 		osmFeatureTrees[osmCategory] = {
 			"tree": cKDTree(osmFturPts),
 			"points": osmFturPts,
 			"rows": osmFturRows
-		}
+		}'''
 
+osmFeatureTrees = {}
+for osmCategory in ["highway", "building", "construction"]:
+	print(f"Querying {osmCategory}_srf for CKDTree construction")
+	query = f"""
+		SELECT geoid, lat, lon, srf
+		FROM {osmCategory}_srf
+		WHERE lon IS NOT NULL AND lat IS NOT NULL
+	"""
+
+	pl_df = conn.execute(query).pl()
+
+	if pl_df.height == 0:
+		print(f"Construct CKDTree for {osmCategory}: 0 points")
+		continue
+
+	pts = pl_df.select(["lon", "lat"]).to_numpy()
+	rows = pl_df.rows()
+
+	print(f"Construct CKDTree for {osmCategory}: {len(pts)} points")
+
+	osmFeatureTrees[osmCategory] = {
+		"tree": cKDTree(pts),
+		"points": pts,
+		"rows": rows
+	}
 print("Finished building CKDTrees for OSM features.")
 ######################################################################################
+output = []
 # Now process each terrain point once
+guid = 0
 for idx, dfRow in df_compositeTerrain.iterrows():
 	#ctLat, ctLon = dfRow['lat'], dfRow['lon']
 	terrainPt = np.array([dfRow['lon'], dfRow['lat']])
@@ -475,68 +503,71 @@ for idx, dfRow in df_compositeTerrain.iterrows():
 	lstf_temporal_str = f"[{','.join([f'{x:.1f}' for x in dfRow['lstf_temporal']])}]"
 	ndvi_temporal_str = f"[{','.join([f'{x:.1f}' for x in dfRow['ndvi_temporal']])}]"
 	ndmi_temporal_str = f"[{','.join([f'{x:.1f}' for x in dfRow['ndmi_temporal']])}]"
-	
-	# Insert into database once per terrain point
-	"""try:
-		cursor.execute(
-			'''INSERT INTO terrain_composite (
-			geoid, lat, lon, lstf, lstf_serc, 
-			lstf_arc, lstf_flag, ndvi, ndvi_serc, ndvi_arc, 
-			ndvi_flag, ndmi, ndmi_serc, ndmi_arc, ndmi_flag,
-			elv_rel, elv, idx_row, idx_col, mdrdasp, 
-			mdrdconc, mdrdgrv, mdrdunp, mdconst, mdbldg,
-			lstf_ndvi_corr, lstf_ndmi_corr, ndvi_ndmi_corr, 
-			lstf_ndvi_pval, lstf_ndmi_pval, ndvi_ndmi_pval,
-			lstf_temporal, ndvi_temporal, ndmi_temporal, ls_land_cover, cl_land_cover) VALUES (
-			?, ?, ?, ?, ?, 
-			?, ?, ?, ?, ?, 
-			?, ?, ?, ?, ?, 
-			?, ?, ?, ?, ?, 
-			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, 
-			?, ?, ?, ?, ?, ?)''',
-			(idx, 
-			dfRow["lat"],
-			dfRow["lon"],
-			dfRow["lstf"],
-			dfRow["lstf_serc"],
-			dfRow["lstf_arc"],
-			dfRow["lstf_flag"],
-			dfRow["ndvi"],
-			dfRow["ndvi_serc"],
-			dfRow["ndvi_arc"],
-			dfRow["ndvi_flag"],
-			dfRow["ndmi"],
-			dfRow["ndmi_serc"],
-			dfRow["ndmi_arc"],
-			dfRow["ndmi_flag"],
-			dfRow["elv_rel"],
-			dfRow["elv"],
-			dfRow["idx_row"],
-			dfRow["idx_col"], 
-			distToRoad_asphalt,
-			distToRoad_concrete,
-			distToRoad_gravel,
-			distToRoad_unpaved,
-			distToStructure_construction,
-			distToStructure_building,
-			dfRow["lstf_ndvi_corr"],
-			dfRow["lstf_ndmi_corr"],
-			dfRow["ndvi_ndmi_corr"],
-			dfRow["lstf_ndvi_pval"],
-			dfRow["lstf_ndmi_pval"],
-			dfRow["ndvi_ndmi_pval"],
-			lstf_temporal_str,
-			ndvi_temporal_str,
-			ndmi_temporal_str,
-			lsLandCover,
-			None,
-			)
-		)
-	
-	except Exception as e:
-		print(f"Error inserting row {idx}: {e}")"""
+	output.append({
+		"geoid" : guid, 
+		"lat": dfRow["lat"],
+		"lon": dfRow["lon"],
+		"lstf": dfRow["lstf"],
+		"lstf_serc": dfRow["lstf_serc"], 
+		"lstf_arc": dfRow["lstf_arc"],
+		"lstf_flag": dfRow["lstf_flag"],
+		"ndvi": dfRow["ndvi"],
+		"ndvi_serc": dfRow["ndvi_serc"],
+		"ndvi_arc": dfRow["ndvi_arc"], 
+		"ndvi_flag": dfRow["ndvi_flag"],
+		"ndmi": dfRow["ndmi"],
+		"ndmi_serc": dfRow["ndmi_serc"],
+		"ndmi_arc": dfRow["ndmi_arc"],
+		"ndmi_flag": dfRow["ndmi_flag"],
+		"elv_rel": dfRow["elv_rel"],
+		"elv": dfRow["elv"],
+		"idx_row": dfRow["idx_row"],
+		"idx_col": dfRow["idx_col"],
+		"mdrdasp": distToRoad_asphalt, 
+		"mdrdconc": distToRoad_concrete,
+		"mdrdgrv": distToRoad_gravel, 
+		"mdrdunp": distToRoad_unpaved, 
+		"mdconst": distToStructure_construction, 
+		"mdbldg": distToStructure_building,
+		"lstf_ndvi_corr": dfRow["lstf_ndvi_corr"], 
+		"lstf_ndmi_corr": dfRow["lstf_ndmi_corr"], 
+		"ndvi_ndmi_corr": dfRow["ndvi_ndmi_corr"], 
+		"lstf_ndvi_pval": dfRow["lstf_ndvi_pval"], 
+		"lstf_ndmi_pval": dfRow["lstf_ndmi_pval"], 
+		"ndvi_ndmi_pval": dfRow["ndvi_ndmi_pval"],
+		"lstf_temporal": lstf_temporal_str, 
+		"ndvi_temporal": ndvi_temporal_str, 
+		"ndmi_temporal": ndmi_temporal_str, 
+		"ls_land_cover": lsLandCover, 
+		"cl_land_cover": None
+	})
+	guid+=1
 
-conn.commit()
+terrain_composite_df = pd.DataFrame(output)
+conn.register("terrain_composite_temp", terrain_composite_df)
+
+conn.execute("""
+    INSERT INTO terrain_composite (
+        geoid, lat, lon, lstf, lstf_serc, 
+        lstf_arc, lstf_flag, ndvi, ndvi_serc, ndvi_arc, 
+        ndvi_flag, ndmi, ndmi_serc, ndmi_arc, ndmi_flag,
+        elv_rel, elv, idx_row, idx_col, mdrdasp, 
+        mdrdconc, mdrdgrv, mdrdunp, mdconst, mdbldg,
+        lstf_ndvi_corr, lstf_ndmi_corr, ndvi_ndmi_corr, 
+        lstf_ndvi_pval, lstf_ndmi_pval, ndvi_ndmi_pval,
+        lstf_temporal, ndvi_temporal, ndmi_temporal, ls_land_cover, cl_land_cover
+    )
+    SELECT
+        geoid, lat, lon, lstf, lstf_serc, 
+        lstf_arc, lstf_flag, ndvi, ndvi_serc, ndvi_arc, 
+        ndvi_flag, ndmi, ndmi_serc, ndmi_arc, ndmi_flag,
+        elv_rel, elv, idx_row, idx_col, mdrdasp, 
+        mdrdconc, mdrdgrv, mdrdunp, mdconst, mdbldg,
+        lstf_ndvi_corr, lstf_ndmi_corr, ndvi_ndmi_corr, 
+        lstf_ndvi_pval, lstf_ndmi_pval, ndvi_ndmi_pval,
+        lstf_temporal, ndvi_temporal, ndmi_temporal, ls_land_cover, cl_land_cover
+    FROM terrain_composite_temp
+""")
+
 conn.close()
 print("Composite data saved to database.")
