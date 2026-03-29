@@ -5,6 +5,7 @@ import sqlite3
 import duckdb
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from rasterio.windows import from_bounds
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 VIZUALIZE = True
@@ -23,10 +24,10 @@ conn_runtime = sqlite3.connect('runtime.db')
 cursor_runtime = conn_runtime.cursor() 
 query_runtime = "SELECT * FROM site_info"
 cursor_runtime.execute(query_runtime)
-site_info = cursor_runtime.fetchone()
+siteInfo = cursor_runtime.fetchone()
 siteInfo_headers = [description[0] for description in cursor_runtime.description]
 
-siteInfoDict = dict(zip(siteInfo_headers, site_info))
+siteInfoDict = dict(zip(siteInfo_headers, siteInfo))
 locationId = siteInfoDict['NAME']
 
 aoi_bb_pt_sw = eval(siteInfoDict['AOI_BB_PT_SW'])
@@ -149,7 +150,7 @@ def get_land_cover_info(cursor, val):
     Returns:
         tuple: (hex_color, land_cover) or (None, None) if not found
     """
-    query = "SELECT R, G, B, LAND_COVER FROM land_cover_classification_ref WHERE VAL = ?"
+    query = "SELECT R, G, B, LAND_COVER FROM classification_ref WHERE VAL = ?"
     cursor.execute(query, (int(val),))
     result = cursor.fetchone()
     
@@ -159,8 +160,8 @@ def get_land_cover_info(cursor, val):
         return None, None, None, None
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
-cursor.execute("DELETE FROM cdl_data")
-conn.commit()
+#cursor.execute("DELETE FROM cdl_data")
+#conn.commit()
 
 dataToViz = {"VAL": [], "RGB": [], "LAND_COVER": []}
 rgb_array = np.zeros((band_window.shape[0], band_window.shape[1], 3))
@@ -170,7 +171,8 @@ psd_lon, psd_lat = calc_pixel_size_deg(30.0, [aoi_bb_pt_sw, aoi_bb_pt_ne])
 rasterCount = 0
 catalog = {}
 catalogRef = []
-dataOut = {"lat": [], "lon": [], "val": [], "lc":[]}
+dataOut = {"raster_id": [], "lat": [], "lon": [], "lc_val": [], "lc_label": []}
+
 cy = aoi_bb_pt_sw[1]
 for i, row in enumerate(band_window):
     cx = aoi_bb_pt_sw[0]
@@ -189,21 +191,38 @@ for i, row in enumerate(band_window):
 
             dataOut["lat"].append(pixel_lat)
             dataOut["lon"].append(pixel_lon)
-            dataOut["val"].append(val)
-            dataOut["lc"].append(land_cover) 
-            rasterId = f"{i}-{j}"
+            dataOut["lc_val"].append(val)
+            dataOut["lc_label"].append(land_cover)
+            dataOut["raster_id"].append(f"{i}-{j}")
  
-            cursor.execute(
+            '''cursor.execute(
                 "INSERT INTO cdl_data (RASTER_ID, LAT, LON, LC_VAL, LC_LABEL) VALUES (?, ?, ?, ?, ?)",
                 (rasterId, pixel_lat, pixel_lon, int(val), land_cover)
-            )
+            )'''
 
             rasterCount+=1
         cx += psd_lon
     cy += psd_lat
-conn.commit()
+#conn.commit()
 
-for key, obj in catalog.items():
+output_df = pd.DataFrame(dataOut)
+
+conn.register("output_temp", output_df)
+conn.execute("""
+    CREATE OR REPLACE TABLE cdl_data AS
+    SELECT
+        t.raster_id,
+        t.lat,
+        t.lon,
+        t.lc_val,
+        t.lc_label,
+    FROM output_temp t
+    INNER JOIN output_temp r
+        ON t.raster_id = r.raster_id
+""")
+
+                     
+'''for key, obj in catalog.items():
     lc = obj["lc"]
     count = obj["count"]
     prctTotal = (count / rasterCount) * 100
@@ -227,8 +246,9 @@ if VIZUALIZE:
     plt.show()
 
     # Optional: Show legend of unique land cover types
-    unique_vals = np.unique(band_window[~np.isnan(band_window)])
-    '''print("\nLand Cover Types in Window:")
+    unique_vals = np.unique(band_window[~np.isnan(band_window)])'''
+
+'''print("\nLand Cover Types in Window:")
     for val in unique_vals:
         r, g, b, land_cover = get_land_cover_info(cursor, int(val))
         print(f"  {int(val)}: {land_cover} (R:{r}, G:{g}, B:{b})")'''
