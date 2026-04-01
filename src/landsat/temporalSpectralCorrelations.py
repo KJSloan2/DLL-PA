@@ -152,30 +152,46 @@ output_df = pd.DataFrame({
 # Bulk insert into DuckDB
 ######################################################################################
 print("Inserting into spectral_temporal...")
-conn.execute("DELETE FROM spectral_temporal")
+lstf_vals = lstf_data[:, valid_i, valid_j].T  # (n_valid, T)
+ndvi_vals = ndvi_data[:, valid_i, valid_j].T
+ndmi_vals = ndmi_data[:, valid_i, valid_j].T
+
+lstf_temporal_strs = [','.join(row.astype(str)) for row in lstf_vals]
+ndvi_temporal_strs = [','.join(row.astype(str)) for row in ndvi_vals]
+ndmi_temporal_strs = [','.join(row.astype(str)) for row in ndmi_vals]
+
+output_df = pd.DataFrame({
+    'geoid':           np.arange(n_valid),
+    'lat':             latArray[valid_i, valid_j],
+    'lon':             lonArray[valid_i, valid_j],
+    'lstf':            lstf_mean[valid_i, valid_j],
+    'lstf_serc':       np.round(analysisStack["lstf_serc"][valid_i, valid_j], 2),
+    'lstf_arc':        np.round(analysisStack["lstf_arc"][valid_i, valid_j], 2),
+    'ndvi':            ndvi_mean[valid_i, valid_j],
+    'ndvi_serc':       np.round(analysisStack["ndvi_serc"][valid_i, valid_j], 2),
+    'ndvi_arc':        np.round(analysisStack["ndvi_arc"][valid_i, valid_j], 2),
+    'ndmi':            ndmi_mean[valid_i, valid_j],
+    'ndmi_serc':       np.round(analysisStack["ndmi_serc"][valid_i, valid_j], 2),
+    'ndmi_arc':        np.round(analysisStack["ndmi_arc"][valid_i, valid_j], 2),
+    'idx_row':         valid_i,
+    'idx_col':         valid_j,
+    'lstf_ndvi_corr':  np.round(corr_lstf_ndvi[valid_i, valid_j], 3),
+    'lstf_ndmi_corr':  np.round(corr_lstf_ndmi[valid_i, valid_j], 3),
+    'ndvi_ndmi_corr':  np.round(corr_ndvi_ndmi[valid_i, valid_j], 3),
+    'lstf_ndvi_pval':  np.round(pval_lstf_ndvi[valid_i, valid_j], 3),
+    'lstf_ndmi_pval':  np.round(pval_lstf_ndmi[valid_i, valid_j], 3),
+    'ndvi_ndmi_pval':  np.round(pval_ndvi_ndmi[valid_i, valid_j], 3),
+    'lstf_temporal':   lstf_temporal_strs,
+    'ndvi_temporal':   ndvi_temporal_strs,
+    'ndmi_temporal':   ndmi_temporal_strs,
+})
+
+######################################################################################
+# Bulk insert into DuckDB — CREATE OR REPLACE is far faster than INSERT...SELECT
+######################################################################################
+print("Inserting into spectral_temporal...")
 conn.register("spectral_temp", output_df)
-conn.execute("""
-    INSERT INTO spectral_temporal (
-        geoid, lat, lon,
-        lstf, lstf_serc, lstf_arc,
-        ndvi, ndvi_serc, ndvi_arc,
-        ndmi, ndmi_serc, ndmi_arc,
-        idx_row, idx_col,
-        lstf_ndvi_corr, lstf_ndmi_corr, ndvi_ndmi_corr,
-        lstf_ndvi_pval, lstf_ndmi_pval, ndvi_ndmi_pval,
-        lstf_temporal, ndvi_temporal, ndmi_temporal
-    )
-    SELECT
-        geoid, lat, lon,
-        lstf, lstf_serc, lstf_arc,
-        ndvi, ndvi_serc, ndvi_arc,
-        ndmi, ndmi_serc, ndmi_arc,
-        idx_row, idx_col,
-        lstf_ndvi_corr, lstf_ndmi_corr, ndvi_ndmi_corr,
-        lstf_ndvi_pval, lstf_ndmi_pval, ndvi_ndmi_pval,
-        lstf_temporal, ndvi_temporal, ndmi_temporal
-    FROM spectral_temp
-""")
+conn.execute("CREATE OR REPLACE TABLE spectral_temporal AS SELECT * FROM spectral_temp")
 conn.commit()
 conn.close()
 print("temporalSpectralCorrelations.py DONE")
